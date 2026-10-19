@@ -1,0 +1,24 @@
+# Inputs: course PDFs are copyrighted and the ground truth is private sponsor data (see data/README.md)
+data/pdfs/*.pdf
+data/*.csv
+
+# Large intermediate files and downloaded weights
+outputs/
+models/
+*.pt
+*.pth
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.DS_Store
+
+# Per-molecule outputs contain predicted and ground-truth SMILES for the private papers.
+# They are written locally; only SMILES-free metrics are committed.
+results/predictions/
+results/scored/
