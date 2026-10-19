@@ -1,0 +1,28 @@
+# Tested target: Python 3.10 (MolScribe pins older libraries that are not ready for newer Python).
+# Install into a fresh environment:  pip install -r requirements.txt
+
+# Core pipeline
+numpy<2               # MolScribe's image-augmentation dependency breaks on NumPy 2
+pandas>=2.0,<3
+pyyaml>=6.0
+matplotlib>=3.7
+pillow>=10.0
+pymupdf>=1.24         # PDF page rendering
+rdkit>=2024.3.1       # SMILES parsing, InChIKeys, Morgan fingerprints
+huggingface_hub>=0.23 # model weight downloads
+
+# Molecule detection: MolDetV2 is a YOLO11 model, which needs ultralytics 8.3 or newer
+ultralytics>=8.3.0
+
+# Recognition
+torch>=2.0
+# MolScribe from its GitHub repo (pins numpy<2, timm==0.4.12, albumentations==1.1.0 itself).
+# If importing it fails with "No module named 'torch._six'", run:
+#   pip install "torch==1.13.1" "torchvision==0.14.1"
+MolScribe @ git+https://github.com/thomas0809/MolScribe.git@main
+
+# Optional: publish metrics to Weights & Biases (--wandb)
+wandb>=0.17
+
+# Tests
+pytest>=7.0
