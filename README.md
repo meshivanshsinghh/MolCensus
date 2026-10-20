@@ -27,6 +27,10 @@ papers themselves, at the paper level, so different tools can be compared on the
 | MolScribe (Qian et al., 2023) | Converts one cropped drawing to SMILES, with a confidence score | Runs on CPU |
 | BioMiner end to end (Yan et al., 2026) | Whole PDF to labeled SMILES | Wired in and **disabled**. Needs one 24 GB GPU; waiting on course HPC access. |
 
+Every tool is also checked on public data first: MolScribe runs on a fixed sample of public USPTO
+patent images and ACS journal images with known SMILES, and its accuracy is compared with the
+published number (see "Public crop check").
+
 No numbers are reported for a tool until it has actually run.
 
 ## Quick start
@@ -44,8 +48,10 @@ python -c "import rdkit, fitz, ultralytics, torch, molscribe; print('environment
 # Put the six course PDFs in data/pdfs/ and the ground-truth CSV in data/ (see data/README.md)
 
 python run_pipeline.py --papers 16    # quick test on the smallest paper
-python run_pipeline.py                # full run on all six papers
+python run_pipeline.py                # full run: six papers plus the public crop check
 ```
+
+The first full run downloads the public check images once (184 MB, into `data/public/`).
 
 Results land in `results/`. Start with `results/RESULTS.md`.
 
@@ -55,9 +61,10 @@ Using conda instead of uv: `conda create -n molcensus python=3.10 -y`, `conda ac
 ## How it works
 
 ```
-PDFs ──render──▶ page images ──detect──▶ molecule crops ──recognize──▶ SMILES + confidence ──score──▶ metrics ──report──▶ tables, JSON, figure
-                 (PyMuPDF)               (MolDetV2)                    (MolScribe; BioMiner        (RDKit)                (optional: W&B)
-                                                                        reads PDFs directly)
+PDFs ──render──▶ page images ──detect──▶ molecule crops ──recognize──▶ SMILES + confidence ──score──▶ metrics ──┐
+                 (PyMuPDF)               (MolDetV2)                    (MolScribe; BioMiner        (RDKit)         │
+                                                                        reads PDFs directly)                       ├──report──▶ tables, JSON, figures
+public images with known SMILES ──public──▶ per-image predictions and accuracy, compared with published ───────────┘   (optional: W&B)
 ```
 
 Each step writes files that the next step reads, so any step can be rerun on its own
@@ -70,7 +77,8 @@ Each step writes files that the next step reads, so any step can be rerun on its
 | detect | `detect.py` | page images | one PNG per molecule, `crops_index.csv`, `results/crops_per_paper.csv` |
 | recognize | `recognizers/*_runner.py` | crops (or PDFs for BioMiner) | `results/predictions/<tool>_predictions.csv` |
 | score | `chem.py`, `metrics.py` | predictions, ground truth | `results/per_paper_metrics.csv`, `results/scored/` |
-| report | `report.py`, `wandb_log.py` | metrics | `comparison.csv`, `summary_metrics.json`, `RESULTS.md`, figure |
+| public | `public_crops.py` | MolScribe's public evaluation images | `results/public/public_metrics.csv` and per-image files |
+| report | `report.py`, `wandb_log.py` | metrics | `comparison.csv`, `summary_metrics.json`, `RESULTS.md`, figures |
 
 ## Repository layout
 
@@ -78,6 +86,7 @@ Each step writes files that the next step reads, so any step can be rerun on its
 .
 ├── run_pipeline.py              # entry point: runs every step in order
 ├── configs/default.yaml         # all paths and settings (nothing is hardcoded in the code)
+├── configs/embedded.yaml        # same run with embedded-image detection (detection comparison)
 ├── requirements.txt             # dependencies
 ├── .env.example                 # template for machine-specific paths (BioMiner only)
 ├── CLAUDE.md                    # project brief for AI coding agents (Claude Code)
@@ -95,7 +104,8 @@ Each step writes files that the next step reads, so any step can be rerun on its
 │   │   └── biominer_runner.py   # BioMiner: runs its CLI per PDF, parses its SMILES tables
 │   ├── chem.py                  # RDKit: validity, InChIKeys, Morgan fingerprints
 │   ├── metrics.py               # all metrics, per paper and pooled
-│   ├── report.py                # comparison table, JSON, RESULTS.md, figure
+│   ├── public_crops.py          # public crop check: download, sample, run, per-image scoring
+│   ├── report.py                # comparison table, JSON, RESULTS.md, figures
 │   └── wandb_log.py             # optional upload of metrics to Weights & Biases
 ├── tests/test_metrics.py        # unit tests for the scoring logic
 └── results/                     # committed outputs (SMILES-free)
@@ -121,7 +131,10 @@ drawn as vector graphics and can hand MolScribe whole multi-molecule figures, so
 | `results/per_paper_metrics.csv` | Every metric for every tool and paper, plus an `ALL` row |
 | `results/summary_metrics.json` | Same numbers in JSON, with run settings |
 | `results/crops_per_paper.csv` | Detected crops compared with the ground-truth count, per paper |
-| `results/figures/recall_by_paper.png` | Exact and stereo-blind recall by paper |
+| `results/figures/recall_by_paper.png` | Exact and stereo-blind recall by paper, with 95% intervals |
+| `results/public/public_metrics.csv` | Public crop check: accuracy per tool and dataset, 95% interval, published value, pass/fail |
+| `results/public/molscribe_predictions.csv`, `molscribe_scored.csv` | Per-image predictions and match flags for the public images |
+| `results/figures/public_check.png` | Public accuracy with 95% intervals next to the published numbers |
 | `results/data_manifest.csv` | SHA-256 hash of every input file |
 | `results/environment.json` | Python and package versions, git commit, and whether the tree was clean |
 | `results/run_log.txt` | Log of every run |
@@ -136,8 +149,9 @@ Page images and crops go to `outputs/work/` and are not committed.
 The six course PDFs are copyrighted, and their ground truth is private sponsor data. Neither is
 committed. The files marked "local only" contain predicted or ground-truth SMILES for those
 papers, so they are written to `results/` on your machine but are git-ignored. Everything
-committed is SMILES-free: metrics, counts, the figure and the run metadata. The W&B upload
-follows the same rule.
+committed for the course papers is SMILES-free: metrics, counts, figures and run metadata. The
+public check files in `results/public/` are committed, because their images and SMILES are public.
+The W&B upload follows the same rule.
 
 ## Metrics
 
@@ -152,9 +166,50 @@ same paper, as in the anchor study's paper-level precision and recall (Gulluoglu
 - **Near-match recall:** share of ground-truth molecules whose best Tanimoto is at least 0.85 (set in the config).
 - **Mean confidence:** the tool's own confidence, averaged over valid predictions.
 
+**Uncertainty.** With about 220 molecules in six papers, every recall and precision comes with two
+95% intervals. The Wilson interval treats molecules as independent. The paper bootstrap (pooled row
+only) resamples the six papers with replacement and recomputes the pooled rate; it is wider and more
+honest, because molecules from the same paper tend to succeed or fail together.
+
 Precision counts unique valid predictions, so a molecule drawn twice in a paper counts once.
 Invalid outputs are not in the precision denominator; they are reported separately through the
 validity rate. The `ALL` row pools counts over papers (micro-average).
+
+## Public crop check
+
+Before trusting a tool's score on the course papers, MolCensus checks that the installed tool
+reproduces its published accuracy on public data. This was the installation check planned in the
+setup proposal.
+
+- **Data:** MolScribe's evaluation archive `real.zip` (184 MB) from the MIT-licensed Hugging Face
+  repository `yujieq/MolScribe`. It holds the CLEF, UOB, USPTO, Staker and ACS sets; CLEF, UOB and
+  USPTO originally come from the `Kohulan/OCSR_Review` collection, and ACS was collected by the
+  MolScribe authors. It is downloaded once into `data/public/` and never committed.
+- **Default sets:** USPTO (patent drawings) and ACS (journal figures, the closest match to the course
+  papers), 300 images each as a fixed random sample (`public_check` in the config).
+- **Scoring:** each image shows one molecule with one known answer, so accuracy is per image: exact
+  match on the full InChIKey, stereo-blind match, accuracy on chiral molecules, validity, Tanimoto,
+  confidence and seconds per image, each accuracy with a 95% Wilson interval.
+- **Pass criterion:** the published accuracy (MolScribe: 92.6% on USPTO, 71.9% on ACS; Qian et al.,
+  2023) falls inside our 95% interval. InChIKey matching can be slightly more lenient than the
+  canonical-SMILES matching used in the paper (it treats some tautomers as identical), so small
+  differences are expected.
+
+```bash
+python run_pipeline.py --steps public,report   # only the public check
+```
+
+## Detection comparison
+
+`configs/embedded.yaml` repeats the course-paper run with one change: molecules come from the raster
+images embedded in each PDF instead of MolDetV2 detections. Comparing the two runs shows how much of
+the final score depends on detection alone.
+
+```bash
+python run_pipeline.py --config configs/embedded.yaml --steps prepare,detect,recognize,score,report
+```
+
+Results go to `results/embedded_detection/`.
 
 ## Extending MolCensus
 
@@ -212,7 +267,8 @@ reads every output table that has a `smiles` column.
 
 ## Roadmap
 
-1. A public crop dataset (images with SMILES labels) with crop-level scoring.
+1. More public sets: CLEF, UOB and Staker are already in the archive (add them to
+   `public_check.datasets`), plus the BioVista subset of whole papers.
 2. A second recognizer (MolSight or MolNexTR) for a wider side-by-side comparison.
 3. A recognizer registry, so adding a tool needs no edit to `run_pipeline.py`.
 4. Packaging (`pyproject.toml`) and a `molcensus` command-line tool.
@@ -236,6 +292,7 @@ reads every output table that has a `smiles` column.
 - Tang, H., Dang, X., & Wang, J. (2026). Fine-tuning DeepSeek-OCR-2 for molecular structure recognition. *arXiv*. https://arxiv.org/abs/2604.03476
 - Yan, J., et al. (2026). BioMiner: A multi-modal system for automated mining of protein-ligand bioactivity data from literature. *arXiv*. https://arxiv.org/abs/2604.21508
 - MolDetV2 weights: https://huggingface.co/UniParser/MolDetv2
+- Public check images: https://huggingface.co/yujieq/MolScribe (`real.zip`, MIT license)
 
 ## License
 

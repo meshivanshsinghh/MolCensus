@@ -15,14 +15,71 @@ Metrics reported for each tool and paper, plus an "ALL" row pooled over papers:
                         any valid prediction from the same paper, averaged
   near_match_recall     share of ground-truth molecules with best Tanimoto >= threshold
   mean_confidence       average tool-reported confidence over valid predictions
+
+Uncertainty. With about 220 molecules in six papers, every rate gets two 95% intervals:
+  *_ci_low / *_ci_high      Wilson score interval, treating molecules as independent
+  *_boot_low / *_boot_high  bootstrap over papers ("ALL" row only): resample the six papers with
+                            replacement and recompute the pooled rate. This is wider and more honest,
+                            because molecules in the same paper tend to succeed or fail together.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Iterable
 
 import numpy as np
 import pandas as pd
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a proportion. Behaves well near 0 and 1 and for small n."""
+    if n <= 0:
+        return (math.nan, math.nan)
+    p = successes / n
+    denominator = 1 + z**2 / n
+    centre = (p + z**2 / (2 * n)) / denominator
+    half_width = z * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denominator
+    return (max(0.0, centre - half_width), min(1.0, centre + half_width))
+
+
+def paper_bootstrap(
+    per_paper: pd.DataFrame, numerator: str, denominator: str, rounds: int = 2000, seed: int = 0
+) -> tuple[float, float]:
+    """95% interval for a pooled rate (sum of numerators / sum of denominators), resampling papers."""
+    papers = per_paper[per_paper["paper_id"] != "ALL"]
+    if len(papers) < 2:
+        return (math.nan, math.nan)
+    rng = np.random.default_rng(seed)
+    num = papers[numerator].to_numpy(dtype=float)
+    den = papers[denominator].to_numpy(dtype=float)
+    picks = rng.integers(0, len(papers), size=(rounds, len(papers)))
+    totals = den[picks].sum(axis=1)
+    rates = np.divide(num[picks].sum(axis=1), totals, out=np.full(rounds, np.nan), where=totals > 0)
+    low, high = np.nanpercentile(rates, [2.5, 97.5])
+    return (float(low), float(high))
+
+
+# (rate name, numerator column, denominator column) for every rate that gets intervals.
+INTERVAL_RATES = [
+    ("exact_recall", "exact_tp", "n_gt_unique"),
+    ("exact_precision", "exact_tp", "n_pred_unique"),
+    ("stereo_blind_recall", "stereo_blind_tp", "n_gt_unique"),
+]
+
+
+def add_intervals(per_paper: pd.DataFrame, rounds: int = 2000, seed: int = 0) -> pd.DataFrame:
+    """Add Wilson intervals to every row and paper-bootstrap intervals to the pooled ALL row."""
+    per_paper = per_paper.copy()
+    is_pooled = per_paper["paper_id"] == "ALL"
+    for rate, numerator, denominator in INTERVAL_RATES:
+        bounds = [wilson_interval(int(row[numerator]), int(row[denominator])) for _, row in per_paper.iterrows()]
+        per_paper[f"{rate}_ci_low"] = [low for low, _ in bounds]
+        per_paper[f"{rate}_ci_high"] = [high for _, high in bounds]
+        low, high = paper_bootstrap(per_paper, numerator, denominator, rounds, seed)
+        per_paper[f"{rate}_boot_low"] = np.where(is_pooled, low, np.nan)
+        per_paper[f"{rate}_boot_high"] = np.where(is_pooled, high, np.nan)
+    return per_paper
 
 
 def set_match(predicted_keys: Iterable, truth_keys: Iterable) -> dict:
@@ -39,7 +96,7 @@ def set_match(predicted_keys: Iterable, truth_keys: Iterable) -> dict:
     }
 
 
-def _featurize_column(smiles: pd.Series, featurizer) -> pd.DataFrame:
+def featurize_column(smiles: pd.Series, featurizer) -> pd.DataFrame:
     """Featurize each distinct SMILES once and return identifier columns aligned with the input."""
     cache = {value: featurizer.featurize(value) for value in smiles.dropna().unique()}
     empty = featurizer.featurize("")
@@ -72,13 +129,15 @@ def score_tool(
     ground_truth: pd.DataFrame,
     featurizer,
     near_match_threshold: float = 0.85,
+    bootstrap_rounds: int = 2000,
+    seed: int = 0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score one tool. Returns (scored predictions, ground-truth match table, per-paper metrics)."""
     tool = predictions["tool"].iloc[0] if len(predictions) else "unknown"
 
-    preds = predictions.join(_featurize_column(predictions["pred_smiles"], featurizer))
+    preds = predictions.join(featurize_column(predictions["pred_smiles"], featurizer))
     truth = ground_truth.join(
-        _featurize_column(ground_truth["gt_smiles"], featurizer).add_prefix("gt_")
+        featurize_column(ground_truth["gt_smiles"], featurizer).add_prefix("gt_")
     )
 
     scored_parts, truth_parts, metric_rows = [], [], []
@@ -137,6 +196,7 @@ def score_tool(
         [per_paper, pd.DataFrame([_pooled_metrics(tool, per_paper, scored, truth_table, near_match_threshold)])],
         ignore_index=True,
     )
+    per_paper = add_intervals(per_paper, bootstrap_rounds, seed)
 
     # Fingerprint objects are only needed in memory.
     scored = scored.drop(columns=["fingerprint"])

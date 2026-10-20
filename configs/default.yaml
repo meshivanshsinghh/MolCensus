@@ -8,6 +8,7 @@ paths:
   work_dir: outputs/work                                          # page images and crops (not committed)
   models_dir: models                                              # downloaded weights (not committed)
   results_dir: results                                            # metrics, predictions, figures (committed)
+  public_data_dir: data/public                                    # downloaded public benchmark images (not committed)
 
 # Course benchmark papers with curated ground truth (222 molecules in total).
 papers: [1, 2, 4, 6, 16, 19]
@@ -46,7 +47,21 @@ recognizers:
     config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM API key
     timeout_s: 3600
 
+public_check:
+  # Installation check from the 1.1 proposal: does each tool reproduce its published accuracy on
+  # public single-molecule images before we trust its score on the course papers?
+  hf_repo: yujieq/MolScribe
+  archive: real.zip         # 184 MB: CLEF, UOB, USPTO, Staker and ACS images with SMILES (MIT-licensed repo)
+  datasets: [uspto, acs]    # USPTO = patent drawings; ACS = journal figures, the closest match to the course papers
+  sample_size: 300          # images per dataset, as a fixed random sample (0 = all); keeps the CPU run short
+  seed: 0
+  published_exact:          # MolScribe exact-match accuracy reported by Qian et al. (2023)
+    uspto: 0.926
+    acs: 0.719
+
 scoring:
   fingerprint_radius: 2     # Morgan fingerprint settings for Tanimoto similarity
   fingerprint_bits: 2048
   near_match_threshold: 0.85  # Tanimoto at or above this counts as a near match
+  bootstrap_rounds: 2000    # resamples for the paper-level bootstrap interval
+  seed: 0

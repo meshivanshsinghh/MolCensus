@@ -20,11 +20,13 @@ more tools, and scores every tool against a ground-truth list of the molecules i
 
 - Working code: render (PyMuPDF), detect (MolDetV2 through `ultralytics`, plus an
   embedded-image fallback), recognize (MolScribe on CPU), score (validity, InChIKey exact match,
-  stereo-blind match, Tanimoto, per-paper and pooled P/R/F1), report (CSV, JSON, Markdown, PNG),
-  optional W&B upload (metrics only).
+  stereo-blind match, Tanimoto, per-paper and pooled P/R/F1, Wilson and paper-bootstrap 95%
+  intervals), public crop check (MolScribe on public USPTO and ACS images vs. published accuracy),
+  report (CSV, JSON, Markdown, PNG), optional W&B upload (metrics only).
+- `configs/embedded.yaml` reruns the course papers with embedded-image detection, to compare detectors.
 - Wired in but never run: BioMiner end to end. It needs a 24 GB GPU, its three model servers and
   an MLLM API key. It is disabled in `configs/default.yaml`.
-- The scoring logic has unit tests. The full pipeline has not been confirmed end to end on the
+- The scoring logic, intervals and public check have unit tests. The full pipeline has not been confirmed end to end on the
   owner's Mac yet; check `results/run_log.txt` for the latest run.
 
 ## Commands
@@ -49,6 +51,7 @@ pytest -q
 | detect | `src/molcensus/detect.py` | `outputs/work/crops_index.csv` |
 | recognize | `src/molcensus/recognizers/*_runner.py` | `results/predictions/<tool>_predictions.csv` |
 | score | `src/molcensus/metrics.py` (uses `chem.py`) | `results/per_paper_metrics.csv` |
+| public | `src/molcensus/public_crops.py` | `results/public/public_metrics.csv` |
 | report | `src/molcensus/report.py`, `wandb_log.py` | `results/comparison.csv`, `RESULTS.md`, figure |
 
 Every recognizer returns a DataFrame with the columns in `PREDICTION_COLUMNS`
@@ -73,14 +76,10 @@ new tool needs no changes there.
 
 ## Open work, highest priority first
 
-1. **Public dataset (needed for Assignment 1.2).** The assignment asks for benchmarking on
-   publicly available datasets from the setup proposal; right now only the six private course
-   papers are covered. Add a crop-level benchmark on a public set of molecule images with SMILES
-   labels. Candidates: the USPTO, UOB, JPO and CLEF image sets in the `Kohulan/OCSR_Review`
-   GitHub repository, or `opendatalab/MolRecBench-Wild` on Hugging Face. Check each license
-   before downloading. This needs a loader that yields (image path, reference SMILES) pairs,
-   crop-level scoring (exact match, stereo-blind match, Tanimoto, validity, mean confidence),
-   report integration and a README section. Download data with a script; do not commit it.
+1. **More public data.** The public crop check (`public_crops.py`) covers USPTO and ACS from
+   MolScribe's `real.zip`. CLEF, UOB and Staker are in the same archive and only need adding to
+   `public_check.datasets`. The BioVista subset (whole papers with ground truth) is the next step
+   for paper-level public results.
 2. **A second recognizer** (MolSight or MolNexTR) for a real side-by-side comparison. Follow
    "Add a recognizer" in the README. If its dependencies clash with MolScribe's pins, run it in
    its own environment as a subprocess, like the BioMiner wrapper.

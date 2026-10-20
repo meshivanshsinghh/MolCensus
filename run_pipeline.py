@@ -3,6 +3,7 @@
 Usage:
     python run_pipeline.py                                  # run every step
     python run_pipeline.py --steps score,report             # rerun only scoring and reports
+    python run_pipeline.py --steps public,report            # only the public crop check
     python run_pipeline.py --config configs/default.yaml --papers 1 4
     python run_pipeline.py --steps report --wandb           # publish metrics to W&B
 
@@ -24,7 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from molcensus import data, detect, render, report, weights  # noqa: E402
 from molcensus.config import load_config  # noqa: E402
 
-STEPS = ["prepare", "render", "detect", "recognize", "score", "report"]
+STEPS = ["prepare", "render", "detect", "recognize", "score", "public", "report"]
 log = logging.getLogger("pipeline")
 
 
@@ -150,7 +151,8 @@ def main() -> None:
                 continue
             predictions = pd.read_csv(prediction_file, dtype={"pred_smiles": str, "pred_label": str})
             scored, truth_matches, per_paper = score_tool(
-                predictions, ground_truth, featurizer, scoring["near_match_threshold"]
+                predictions, ground_truth, featurizer, scoring["near_match_threshold"],
+                scoring.get("bootstrap_rounds", 2000), scoring.get("seed", 0),
             )
             scored.to_csv(scored_dir / f"{tool}_scored_predictions.csv", index=False)
             truth_matches.to_csv(scored_dir / f"{tool}_ground_truth_matches.csv", index=False)
@@ -164,14 +166,20 @@ def main() -> None:
         if all_metrics:
             pd.concat(all_metrics, ignore_index=True).to_csv(per_paper_file, index=False)
 
-    # 6. Side-by-side comparison, JSON summary, RESULTS.md and figure.
+    # 6. Public crop check: does each tool reproduce its published accuracy on public images?
+    if "public" in steps and config.get("public_check"):
+        from molcensus.public_crops import run_public_check
+
+        run_public_check(config, paths["models_dir"], results_dir / "public")
+
+    # 7. Side-by-side comparison, JSON summary, RESULTS.md and figures.
     if "report" in steps:
-        if not per_paper_file.exists():
-            raise SystemExit("No metrics found. Run the score step first.")
-        per_paper = pd.read_csv(per_paper_file, dtype={"paper_id": str})
+        per_paper = pd.read_csv(per_paper_file, dtype={"paper_id": str}) if per_paper_file.exists() else None
+        if per_paper is None and not (results_dir / "public" / "public_metrics.csv").exists():
+            raise SystemExit("No metrics found. Run the score or public step first.")
         report.write_reports(per_paper, ground_truth, config, results_dir)
 
-    # 7. Optional: publish the metrics to W&B (python run_pipeline.py --steps report --wandb).
+    # 8. Optional: publish the metrics to W&B (python run_pipeline.py --steps report --wandb).
     if args.wandb:
         from molcensus.wandb_log import publish
 
