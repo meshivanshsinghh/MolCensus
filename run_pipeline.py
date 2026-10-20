@@ -72,9 +72,10 @@ def main() -> None:
     setup_logging(results_dir / "run_log.txt")
     log.info("Steps %s on papers %s (config: %s)", steps, papers, config["config_file"].name)
 
-    # Inputs are needed by almost every step, so load them up front.
-    ground_truth = data.load_ground_truth(paths["ground_truth_csv"], papers)
-    pdfs = data.find_pdfs(paths["pdf_dir"], papers)
+    # The private course inputs are only needed for the paper steps, so "public,report" runs on a fresh clone.
+    if set(steps) & {"prepare", "render", "detect", "recognize", "score"}:
+        ground_truth = data.load_ground_truth(paths["ground_truth_csv"], papers)
+        pdfs = data.find_pdfs(paths["pdf_dir"], papers)
 
     # 1. Record exactly which input files were used.
     if "prepare" in steps:
@@ -109,9 +110,10 @@ def main() -> None:
             raise SystemExit(f"Unknown detection method: {detection['method']}")
         crops.to_csv(crops_index, index=False)
         # Crop counts per paper (no file paths) go to results so they can be committed.
-        crops.groupby("paper_id").size().rename("n_crops").to_frame().join(
-            ground_truth.groupby("paper_id").size().rename("n_ground_truth")
-        ).to_csv(results_dir / "crops_per_paper.csv")
+        # Start from the ground truth so a paper with no crops shows 0 instead of disappearing.
+        ground_truth.groupby("paper_id").size().rename("n_ground_truth").to_frame().join(
+            crops.groupby("paper_id").size().rename("n_crops")
+        ).fillna({"n_crops": 0}).astype(int)[["n_crops", "n_ground_truth"]].to_csv(results_dir / "crops_per_paper.csv")
 
     # 4. Run each enabled recognizer and save its predictions.
     if "recognize" in steps:
@@ -177,7 +179,7 @@ def main() -> None:
         per_paper = pd.read_csv(per_paper_file, dtype={"paper_id": str}) if per_paper_file.exists() else None
         if per_paper is None and not (results_dir / "public" / "public_metrics.csv").exists():
             raise SystemExit("No metrics found. Run the score or public step first.")
-        report.write_reports(per_paper, ground_truth, config, results_dir)
+        report.write_reports(per_paper, config, results_dir)
 
     # 8. Optional: publish the metrics to W&B (python run_pipeline.py --steps report --wandb).
     if args.wandb:

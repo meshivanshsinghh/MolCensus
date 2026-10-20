@@ -92,7 +92,7 @@ def test_rdkit_featurizer_matches_equivalent_smiles():
 
 # ---- confidence intervals ----------------------------------------------------------------------
 
-from molcensus.metrics import add_intervals, paper_bootstrap, wilson_interval  # noqa: E402
+from molcensus.metrics import paper_bootstrap, wilson_interval  # noqa: E402
 
 
 def test_wilson_interval_known_values():

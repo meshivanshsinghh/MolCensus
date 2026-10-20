@@ -20,10 +20,44 @@ log = logging.getLogger(__name__)
 TOOL_NAME = "molscribe"
 
 
+def patch_abbreviation_bug() -> None:
+    """Fix MolScribe's abbreviation expansion (Me, Ph, OMe, ...), which returns '<invalid>' on macOS.
+
+    `_expand_functional_group` deletes the bonds around an abbreviation and then reads their bond
+    order from the deleted bond objects. That is undefined behavior in RDKit: it seems to have
+    worked on the authors' Linux machines, but on macOS it returns 0 and the step fails with
+    KeyError: 0. The patch
+    reads the bond orders before the bonds are deleted. Nothing else in MolScribe changes.
+    """
+    import inspect
+
+    import molscribe.chemistry as chemistry
+
+    if getattr(chemistry, "_molcensus_patched", False):  # MolScribe can be loaded twice in one run
+        return
+    source = inspect.getsource(chemistry._expand_functional_group)
+    replacements = [
+        ("bonds = atom.GetBonds()",
+         "bonds = atom.GetBonds(); bond_types = [int(b.GetBondTypeAsDouble()) for b in bonds]"),
+        ("for adjacent_atom, bond in zip(adjacent_atoms, bonds):",
+         "for adjacent_atom, bond_type in zip(adjacent_atoms, bond_types):"),
+        ("adjacent_atom.SetNumRadicalElectrons(int(bond.GetBondTypeAsDouble()))",
+         "adjacent_atom.SetNumRadicalElectrons(bond_type)"),
+    ]
+    for old, new in replacements:
+        if old not in source:
+            raise RuntimeError(f"MolScribe source changed; abbreviation patch no longer applies: {old!r}")
+        source = source.replace(old, new)
+    exec(source, chemistry.__dict__)  # redefines the function inside MolScribe's own module
+    chemistry._molcensus_patched = True
+
+
 def run_molscribe(crops: pd.DataFrame, checkpoint_path: Path, device: str) -> pd.DataFrame:
     """Predict SMILES for every crop. A failed crop is recorded with its error instead of stopping the run."""
     import torch
     from molscribe import MolScribe
+
+    patch_abbreviation_bug()
 
     model = MolScribe(str(checkpoint_path), device=torch.device(device))
     log.info("MolScribe loaded on %s; predicting %d crops", device, len(crops))

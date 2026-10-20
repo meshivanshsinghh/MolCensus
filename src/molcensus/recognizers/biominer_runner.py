@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -46,7 +47,7 @@ def _read_tables_with_smiles(output_dir: Path) -> list[pd.DataFrame]:
                 continue
         except (ValueError, UnicodeDecodeError, pd.errors.ParserError):
             continue  # not a table we can use
-        if any(column.lower() == "smiles" for column in table.columns):
+        if any(str(column).lower() == "smiles" for column in table.columns):
             tables.append(table)
     return tables
 
@@ -59,7 +60,7 @@ def _to_predictions(tables: list[pd.DataFrame], paper_id: int, runtime_s: float)
     """
     pairs = []
     for table in tables:
-        columns = {column.lower(): column for column in table.columns}
+        columns = {str(column).lower(): column for column in table.columns}
         for _, row in table.iterrows():
             smiles = str(row[columns["smiles"]]).strip()
             label = str(row[columns["ligand"]]).strip() if "ligand" in columns else ""
@@ -92,7 +93,8 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> pd
     records = []
     for paper_id, pdf_path in pdfs.items():
         paper_output = output_root / str(paper_id)
-        paper_output.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(paper_output, ignore_errors=True)  # do not rescore tables left by an earlier run
+        paper_output.mkdir(parents=True)
         command = [
             python_exe, "example_open_source.py",
             f"--config_path={settings['config_path']}",
@@ -101,19 +103,23 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> pd
         ]
         log.info("BioMiner: paper %s", paper_id)
         started = time.perf_counter()
-        completed = subprocess.run(
-            command, cwd=repo_dir, env=environment, capture_output=True, text=True,
-            timeout=int(settings.get("timeout_s", 3600)),
-        )
+        try:
+            completed = subprocess.run(
+                command, cwd=repo_dir, env=environment, capture_output=True, text=True,
+                timeout=int(settings.get("timeout_s", 3600)),
+            )
+            (paper_output / "biominer_stdout.log").write_text(completed.stdout + "\n" + completed.stderr)
+            error = "" if completed.returncode == 0 else f"exit code {completed.returncode}; see biominer_stdout.log"
+        except (subprocess.TimeoutExpired, OSError) as exc:  # one slow or broken paper must not stop the run
+            error = f"{type(exc).__name__}: {exc}"
         runtime = time.perf_counter() - started
-        (paper_output / "biominer_stdout.log").write_text(completed.stdout + "\n" + completed.stderr)
 
-        if completed.returncode != 0:
+        if error:
             records.append(
                 {
                     "tool": TOOL_NAME, "crop_id": f"biominer_p{paper_id}_failed", "paper_id": paper_id,
                     "page": None, "pred_smiles": "", "pred_label": "", "confidence": math.nan,
-                    "runtime_s": round(runtime, 1), "error": f"exit code {completed.returncode}; see biominer_stdout.log",
+                    "runtime_s": round(runtime, 1), "error": error,
                 }
             )
             continue

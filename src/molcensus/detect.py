@@ -50,7 +50,11 @@ def detect_with_moldet(
     records = []
 
     for page in pages.itertuples(index=False):
-        result = model.predict(source=page.image_path, imgsz=imgsz, conf=conf_threshold, device=device, verbose=False)[0]
+        try:
+            result = model.predict(source=page.image_path, imgsz=imgsz, conf=conf_threshold, device=device, verbose=False)[0]
+        except Exception as exc:  # one unreadable page must not stop detection for every paper
+            log.warning("Paper %s page %s: detection failed (%s); skipped", page.paper_id, page.page, exc)
+            continue
         if result.boxes is None or len(result.boxes) == 0:
             continue  # page with text, plots or tables only
 
@@ -100,7 +104,11 @@ def detect_embedded_images(pdfs: dict[int, Path], crops_dir: Path, min_width: in
             for page_number, page in enumerate(document, start=1):
                 index = 0
                 for image_info in page.get_images(full=True):
-                    extracted = document.extract_image(image_info[0])  # image_info[0] is the xref
+                    try:
+                        extracted = document.extract_image(image_info[0])  # image_info[0] is the xref
+                    except Exception as exc:
+                        log.warning("Paper %s page %s: image could not be extracted (%s)", paper_id, page_number, exc)
+                        continue
                     if extracted["width"] < min_width or extracted["height"] < min_height:
                         continue
                     index += 1

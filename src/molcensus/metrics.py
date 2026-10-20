@@ -152,14 +152,15 @@ def score_tool(
         # Per-prediction view: does it match any ground-truth molecule, and how close is the nearest one?
         paper_preds["exact_match"] = paper_preds["match_key"].isin(gt_keys)
         paper_preds["stereo_blind_match"] = paper_preds["skeleton_key"].isin(gt_skeletons)
-        truth_fps = paper_truth["gt_fingerprint"].tolist()
+        valid_truth = paper_truth[paper_truth["gt_valid"]]  # a None fingerprint crashes RDKit's bulk similarity
+        truth_fps = valid_truth["gt_fingerprint"].tolist()
         best_scores, best_names = [], []
         for fingerprint in paper_preds["fingerprint"]:
             sims = featurizer.similarities(fingerprint, truth_fps)
             if sims:
                 best = int(np.argmax(sims))
                 best_scores.append(sims[best])
-                best_names.append(paper_truth["gt_name"].iloc[best])
+                best_names.append(valid_truth["gt_name"].iloc[best])
             else:
                 best_scores.append(np.nan)
                 best_names.append("")

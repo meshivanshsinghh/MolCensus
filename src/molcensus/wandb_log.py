@@ -74,7 +74,7 @@ def publish(results_dir: Path, config: dict, project: str, entity: str | None = 
         tables["public_check"] = public
     run.log({name: wandb.Table(dataframe=frame) for name, frame in tables.items()})
 
-    for figure_name in ("recall_by_paper", "public_check"):
+    for figure_name in ("overview", "recall_by_paper", "public_check"):
         figure = results_dir / "figures" / f"{figure_name}.png"
         if figure.exists():
             run.log({f"figure_{figure_name}": wandb.Image(str(figure))})

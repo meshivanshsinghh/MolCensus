@@ -26,14 +26,17 @@ more tools, and scores every tool against a ground-truth list of the molecules i
 - `configs/embedded.yaml` reruns the course papers with embedded-image detection, to compare detectors.
 - Wired in but never run: BioMiner end to end. It needs a 24 GB GPU, its three model servers and
   an MLLM API key. It is disabled in `configs/default.yaml`.
-- The scoring logic, intervals and public check have unit tests. The full pipeline has not been confirmed end to end on the
-  owner's Mac yet; check `results/run_log.txt` for the latest run.
+- The scoring logic, intervals, public check and MolScribe patch have unit tests. The full pipeline
+  ran end to end on the owner's Mac on 2026-10-19 (about 37 minutes on CPU); see `results/run_log.txt`.
+- `molscribe_runner.patch_abbreviation_bug()` fixes a MolScribe bug that made every drawing with an
+  abbreviation (Me, Ph, ...) come out `<invalid>` on macOS. Without it, ACS accuracy drops from
+  0.731 to 0.348. See docs/methods.md.
 
 ## Commands
 
 ```bash
 uv venv --python 3.10 && source .venv/bin/activate && uv pip install -r requirements.txt
-python run_pipeline.py --papers 16          # quick test on the smallest paper
+python run_pipeline.py --papers 16 --steps prepare,render,detect,recognize,score,report  # quick test
 python run_pipeline.py                      # full run
 python run_pipeline.py --steps score,report # rescore saved predictions
 python run_pipeline.py --steps report --wandb
@@ -81,11 +84,11 @@ new tool needs no changes there.
    `public_check.datasets`. The BioVista subset (whole papers with ground truth) is the next step
    for paper-level public results.
 2. **A second recognizer** (MolSight or MolNexTR) for a real side-by-side comparison. Follow
-   "Add a recognizer" in the README. If its dependencies clash with MolScribe's pins, run it in
+   "Add a recognizer" in docs/usage.md. If its dependencies clash with MolScribe's pins, run it in
    its own environment as a subprocess, like the BioMiner wrapper.
 3. **Recognizer registry,** so a new tool needs no edit to `run_pipeline.py`.
 4. **Packaging:** `pyproject.toml` and a `molcensus` command-line entry point.
-5. **CI:** a GitHub Actions workflow that runs `pytest` (install RDKit so the RDKit test runs).
+5. **CI:** done (`.github/workflows/tests.yml`, scoring tests with RDKit; the MolScribe test skips there).
 6. **BioMiner** end to end, once GPU access exists (the course HPC request uses partition
    `courses-gpu`).
 7. Later: detection scoring against hand-drawn boxes, R-group enumeration, and a "recall

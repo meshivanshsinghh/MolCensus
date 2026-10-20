@@ -38,6 +38,7 @@ def render_pages(pdfs: dict[int, Path], pages_dir: Path, dpi: int, force: bool =
                     page.get_pixmap(dpi=dpi).save(str(image_path))
                 records.append({"paper_id": paper_id, "page": page_number, "image_path": str(image_path)})
 
-        log.info("Paper %s: %d pages rendered at %d dpi", paper_id, page_number, dpi)
+            page_count = len(document)
+        log.info("Paper %s: %d pages ready at %d dpi", paper_id, page_count, dpi)
 
     return pd.DataFrame(records, columns=["paper_id", "page", "image_path"])
