@@ -23,11 +23,10 @@ TOOL_NAME = "molscribe"
 def patch_abbreviation_bug() -> None:
     """Fix MolScribe's abbreviation expansion (Me, Ph, OMe, ...), which returns '<invalid>' on macOS.
 
-    `_expand_functional_group` deletes the bonds around an abbreviation and then reads their bond
-    order from the deleted bond objects. That is undefined behavior in RDKit: it seems to have
-    worked on the authors' Linux machines, but on macOS it returns 0 and the step fails with
-    KeyError: 0. The patch
-    reads the bond orders before the bonds are deleted. Nothing else in MolScribe changes.
+    `_expand_functional_group` deletes the bonds around an abbreviation, then reads their bond
+    order from the deleted bond objects. That is undefined behavior in RDKit. It seems to work on
+    Linux, but on macOS it returns 0 and the step fails with KeyError: 0. This reads the bond
+    orders before the bonds are deleted and changes nothing else in MolScribe.
     """
     import inspect
 

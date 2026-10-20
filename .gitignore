@@ -24,7 +24,10 @@ __pycache__/
 results/**/predictions/
 results/**/scored/
 
-# Private work plan, report source and update bundles
+# Run log: grows with every run and holds local paths
+results/**/run_log.txt
+
+# Private notes, report drafts and downloaded bundles
 TASKS.md
 reports/
 *.zip

@@ -1,26 +1,9 @@
-"""Score predicted SMILES against the course ground truth, paper by paper.
+"""Score predicted SMILES against the ground truth, paper by paper.
 
-Predictions from a paper are compared only with that paper's ground truth. Crops are not
-aligned one-to-one with ground-truth entries, so exact matching is done on sets of unique
-molecules per paper (the same approach as paper-level precision/recall in the anchor study):
-
-  precision = matched unique predictions / unique valid predictions
-  recall    = matched unique ground-truth molecules / unique ground-truth molecules
-
-Metrics reported for each tool and paper, plus an "ALL" row pooled over papers:
-  validity_rate         share of predictions RDKit can parse
-  exact_*               match on the full InChIKey (stereochemistry must be right)
-  stereo_blind_*        match on the first InChIKey block (connectivity only)
-  mean_best_tanimoto    for each ground-truth molecule, its highest Tanimoto similarity to
-                        any valid prediction from the same paper, averaged
-  near_match_recall     share of ground-truth molecules with best Tanimoto >= threshold
-  mean_confidence       average tool-reported confidence over valid predictions
-
-Uncertainty. With about 220 molecules in six papers, every rate gets two 95% intervals:
-  *_ci_low / *_ci_high      Wilson score interval, treating molecules as independent
-  *_boot_low / *_boot_high  bootstrap over papers ("ALL" row only): resample the six papers with
-                            replacement and recompute the pooled rate. This is wider and more honest,
-                            because molecules in the same paper tend to succeed or fail together.
+Crops do not line up one-to-one with ground-truth entries, so each paper's unique predicted
+molecules are compared with its unique ground-truth molecules as two sets. Each rate also gets
+a Wilson interval and, on the pooled "ALL" row, a bootstrap interval over papers.
+Definitions are in docs/methods.md.
 """
 
 from __future__ import annotations
@@ -59,6 +42,9 @@ def paper_bootstrap(
     low, high = np.nanpercentile(rates, [2.5, 97.5])
     return (float(low), float(high))
 
+
+# What happened to each ground-truth molecule; the buckets add up to n_gt_unique.
+OUTCOME_COLUMNS = ["n_found_exact", "n_stereo_only", "n_near_miss", "n_related", "n_unrelated"]
 
 # (rate name, numerator column, denominator column) for every rate that gets intervals.
 INTERVAL_RATES = [
@@ -131,6 +117,7 @@ def score_tool(
     near_match_threshold: float = 0.85,
     bootstrap_rounds: int = 2000,
     seed: int = 0,
+    related_threshold: float = 0.5,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score one tool. Returns (scored predictions, ground-truth match table, per-paper metrics)."""
     tool = predictions["tool"].iloc[0] if len(predictions) else "unknown"
@@ -186,7 +173,9 @@ def score_tool(
         paper_truth["best_tanimoto"] = gt_best
         paper_truth["best_crop_id"] = gt_best_crop
 
-        metric_rows.append(_paper_metrics(tool, str(paper_id), paper_preds, paper_truth, near_match_threshold))
+        metric_rows.append(
+            _paper_metrics(tool, str(paper_id), paper_preds, paper_truth, near_match_threshold, related_threshold)
+        )
         scored_parts.append(paper_preds)
         truth_parts.append(paper_truth)
 
@@ -205,12 +194,29 @@ def score_tool(
     return scored, truth_table, per_paper
 
 
-def _unique_truth(paper_truth: pd.DataFrame) -> pd.DataFrame:
-    """Ground truth with duplicate molecules removed, so a molecule listed twice is counted once."""
-    return paper_truth.drop_duplicates(subset="gt_match_key")
+def _unique_truth(truth: pd.DataFrame) -> pd.DataFrame:
+    """Readable ground-truth molecules, each counted once per paper."""
+    return truth[truth["gt_valid"]].drop_duplicates(subset=["paper_id", "gt_match_key"])
 
 
-def _paper_metrics(tool: str, paper_id: str, preds: pd.DataFrame, truth: pd.DataFrame, threshold: float) -> dict:
+def outcome_counts(unique_truth: pd.DataFrame, near_threshold: float, related_threshold: float) -> dict:
+    """Put each ground-truth molecule in exactly one bucket, from best outcome to worst."""
+    exact = unique_truth["found_exact"]
+    stereo_only = unique_truth["found_stereo_blind"] & ~exact
+    rest = ~exact & ~stereo_only
+    best = unique_truth["best_tanimoto"]
+    return {
+        "n_found_exact": int(exact.sum()),
+        "n_stereo_only": int(stereo_only.sum()),
+        "n_near_miss": int((rest & (best >= near_threshold)).sum()),
+        "n_related": int((rest & (best < near_threshold) & (best >= related_threshold)).sum()),
+        "n_unrelated": int((rest & (best < related_threshold)).sum()),
+    }
+
+
+def _paper_metrics(
+    tool: str, paper_id: str, preds: pd.DataFrame, truth: pd.DataFrame, threshold: float, related_threshold: float
+) -> dict:
     valid = preds[preds["valid"]]
     exact = set_match(valid["match_key"], truth["gt_match_key"])
     blind = set_match(valid["skeleton_key"], truth["gt_skeleton_key"])
@@ -235,6 +241,7 @@ def _paper_metrics(tool: str, paper_id: str, preds: pd.DataFrame, truth: pd.Data
         "mean_best_tanimoto": float(unique_truth["best_tanimoto"].mean()) if len(unique_truth) else 0.0,
         "near_match_recall": float((unique_truth["best_tanimoto"] >= threshold).mean()) if len(unique_truth) else 0.0,
         "mean_confidence": float(valid["confidence"].mean()) if valid["confidence"].notna().any() else np.nan,
+        **outcome_counts(unique_truth, threshold, related_threshold),
     }
 
 
@@ -249,7 +256,7 @@ def _pooled_metrics(tool: str, per_paper: pd.DataFrame, preds: pd.DataFrame, tru
 
     exact_p, exact_r = ratio("exact_tp", "n_pred_unique"), ratio("exact_tp", "n_gt_unique")
     blind_p, blind_r = ratio("stereo_blind_tp", "n_pred_unique"), ratio("stereo_blind_tp", "n_gt_unique")
-    unique_truth = truth.drop_duplicates(subset=["paper_id", "gt_match_key"])
+    unique_truth = _unique_truth(truth)
     valid = preds[preds["valid"]]
     return {
         "tool": tool,
@@ -271,4 +278,5 @@ def _pooled_metrics(tool: str, per_paper: pd.DataFrame, preds: pd.DataFrame, tru
         "mean_best_tanimoto": float(unique_truth["best_tanimoto"].mean()) if len(unique_truth) else 0.0,
         "near_match_recall": float((unique_truth["best_tanimoto"] >= threshold).mean()) if len(unique_truth) else 0.0,
         "mean_confidence": float(valid["confidence"].mean()) if valid["confidence"].notna().any() else np.nan,
+        **{column: int(per_paper[column].sum()) for column in OUTCOME_COLUMNS},
     }

@@ -1,4 +1,4 @@
-"""Tests for the scoring logic. Run with: pytest -q"""
+"""Tests for scoring, intervals, the public check and config loading. Run with: pytest -q"""
 
 import math
 import sys
@@ -10,7 +10,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from molcensus.metrics import score_tool, set_match  # noqa: E402
+from molcensus.config import load_config  # noqa: E402
+from molcensus.metrics import outcome_counts, paper_bootstrap, score_tool, set_match, wilson_interval  # noqa: E402
+from molcensus.public_crops import find_dataset_csv, load_dataset, score_items, summarize  # noqa: E402
 
 
 def test_set_match_counts_unique_keys():
@@ -77,6 +79,34 @@ def test_score_tool_exact_stereo_blind_and_validity():
     assert math.isnan(scored.set_index("crop_id").loc["c2", "best_tanimoto"])  # invalid prediction
 
 
+def test_outcome_counts_puts_each_molecule_in_one_bucket():
+    truth = pd.DataFrame({
+        "found_exact":        [True, False, False, False, False],
+        "found_stereo_blind": [True, True,  False, False, False],
+        "best_tanimoto":      [1.0,  1.0,   0.9,   0.6,   0.2],
+    })
+    assert outcome_counts(truth, near_threshold=0.85, related_threshold=0.5) == {
+        "n_found_exact": 1, "n_stereo_only": 1, "n_near_miss": 1, "n_related": 1, "n_unrelated": 1,
+    }
+
+
+def test_outcomes_add_up_to_unique_ground_truth():
+    truth = pd.DataFrame({"paper_id": [1, 1, 1, 1, 2], "gt_name": list("abcde"), "gt_smiles": ["A", "A", "B@", "C", "D"]})
+    preds = _predictions([(1, "A"), (1, "B"), (2, "Z")])
+    _, _, per_paper = score_tool(preds, truth, FakeFeaturizer())
+    buckets = ["n_found_exact", "n_stereo_only", "n_near_miss", "n_related", "n_unrelated"]
+    assert (per_paper[buckets].sum(axis=1) == per_paper["n_gt_unique"]).all()
+    assert per_paper.set_index("paper_id").loc["1", "n_gt_unique"] == 3  # "A" is listed twice
+
+
+def test_config_can_extend_another(tmp_path):
+    (tmp_path / "base.yaml").write_text("papers: [1, 2]\npaths:\n  results_dir: results\ndetection:\n  method: moldet\n  pad_px: 12\n")
+    (tmp_path / "child.yaml").write_text("extends: base.yaml\ndetection:\n  method: embedded\n")
+    config = load_config(tmp_path / "child.yaml")
+    assert config["detection"] == {"method": "embedded", "pad_px": 12}
+    assert config["papers"] == [1, 2] and config["paths"]["results_dir"].name == "results"
+
+
 def test_rdkit_featurizer_matches_equivalent_smiles():
     pytest.importorskip("rdkit")
     from molcensus.chem import Featurizer
@@ -88,11 +118,6 @@ def test_rdkit_featurizer_matches_equivalent_smiles():
     assert not featurizer.featurize("C1CC").valid                   # unclosed ring
     l_ala, d_ala = featurizer.featurize("C[C@@H](N)C(=O)O"), featurizer.featurize("C[C@H](N)C(=O)O")
     assert l_ala.inchikey != d_ala.inchikey and l_ala.skeleton_key == d_ala.skeleton_key
-
-
-# ---- confidence intervals ----------------------------------------------------------------------
-
-from molcensus.metrics import paper_bootstrap, wilson_interval  # noqa: E402
 
 
 def test_wilson_interval_known_values():
@@ -120,11 +145,6 @@ def test_add_intervals_puts_bootstrap_only_on_pooled_row():
     paper1 = per_paper[per_paper["paper_id"] == "1"].iloc[0]
     assert pooled["exact_recall_ci_low"] <= pooled["exact_recall"] <= pooled["exact_recall_ci_high"]
     assert not math.isnan(pooled["exact_recall_boot_low"]) and math.isnan(paper1["exact_recall_boot_low"])
-
-
-# ---- public crop check -------------------------------------------------------------------------
-
-from molcensus.public_crops import find_dataset_csv, load_dataset, score_items, summarize  # noqa: E402
 
 
 def _fake_public_archive(root):

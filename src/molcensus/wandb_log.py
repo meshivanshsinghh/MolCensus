@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 
 def publish(results_dir: Path, config: dict, project: str, entity: str | None = None) -> str:
-    """Create one W&B run with pooled metrics as the summary and the result tables and figure attached."""
+    """Create one W&B run with pooled metrics as the summary and the result tables and figures attached."""
     try:
         import wandb
     except ImportError as exc:
@@ -57,7 +57,7 @@ def publish(results_dir: Path, config: dict, project: str, entity: str | None = 
         row.pop("paper_id")
         run.summary.update({f"{tool}/{name}": value for name, value in row.items()})
 
-    if public is not None:  # public crop check: accuracy per (tool, dataset)
+    if public is not None:
         for row in public.to_dict(orient="records"):
             run.summary.update({f"public/{row['tool']}/{row['dataset']}/{k}": v for k, v in row.items()
                                 if k not in ("tool", "dataset")})
@@ -74,10 +74,8 @@ def publish(results_dir: Path, config: dict, project: str, entity: str | None = 
         tables["public_check"] = public
     run.log({name: wandb.Table(dataframe=frame) for name, frame in tables.items()})
 
-    for figure_name in ("overview", "recall_by_paper", "public_check"):
-        figure = results_dir / "figures" / f"{figure_name}.png"
-        if figure.exists():
-            run.log({f"figure_{figure_name}": wandb.Image(str(figure))})
+    for figure in sorted((results_dir / "figures").glob("*.png")):
+        run.log({f"figure_{figure.stem}": wandb.Image(str(figure))})
 
     url = run.url
     run.finish()

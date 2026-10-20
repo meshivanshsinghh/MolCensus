@@ -63,5 +63,6 @@ scoring:
   fingerprint_radius: 2     # Morgan fingerprint settings for Tanimoto similarity
   fingerprint_bits: 2048
   near_match_threshold: 0.85  # Tanimoto at or above this counts as a near match
+  related_threshold: 0.5      # below the near-match line but at least this: a related molecule was read
   bootstrap_rounds: 2000    # resamples for the paper-level bootstrap interval
   seed: 0

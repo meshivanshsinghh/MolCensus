@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import zipfile
 from pathlib import Path
 
@@ -158,7 +159,6 @@ def summarize(scored: pd.DataFrame, published_exact: dict) -> pd.DataFrame:
                 "mean_confidence": float(group["confidence"].mean()) if group["confidence"].notna().any() else math.nan,
                 "mean_runtime_s": float(group["runtime_s"].mean()) if group["runtime_s"].notna().any() else math.nan,
                 "published_exact": published if published is not None else math.nan,
-                # The installation check passes when the published number falls inside our 95% interval.
                 "published_within_ci": (exact_low <= published <= exact_high) if published is not None else None,
             }
         )
@@ -196,6 +196,7 @@ def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFr
         predictions = run_molscribe(crops, checkpoint, molscribe["device"])
         predictions.to_csv(out_dir / "molscribe_predictions.csv", index=False)
         scored = score_items(predictions, items, featurizer)
+        scored["image_path"] = scored["image_path"].map(lambda path: os.path.relpath(path, config["repo_root"]))
         scored.to_csv(out_dir / "molscribe_scored.csv", index=False)
         summaries.append(summarize(scored, settings.get("published_exact", {})))
 

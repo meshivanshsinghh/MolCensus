@@ -109,8 +109,7 @@ def main() -> None:
         else:
             raise SystemExit(f"Unknown detection method: {detection['method']}")
         crops.to_csv(crops_index, index=False)
-        # Crop counts per paper (no file paths) go to results so they can be committed.
-        # Start from the ground truth so a paper with no crops shows 0 instead of disappearing.
+        # Count crops per paper, starting from the ground truth so a paper with no crops still shows up.
         ground_truth.groupby("paper_id").size().rename("n_ground_truth").to_frame().join(
             crops.groupby("paper_id").size().rename("n_crops")
         ).fillna({"n_crops": 0}).astype(int)[["n_crops", "n_ground_truth"]].to_csv(results_dir / "crops_per_paper.csv")
@@ -154,7 +153,7 @@ def main() -> None:
             predictions = pd.read_csv(prediction_file, dtype={"pred_smiles": str, "pred_label": str})
             scored, truth_matches, per_paper = score_tool(
                 predictions, ground_truth, featurizer, scoring["near_match_threshold"],
-                scoring.get("bootstrap_rounds", 2000), scoring.get("seed", 0),
+                scoring.get("bootstrap_rounds", 2000), scoring.get("seed", 0), scoring.get("related_threshold", 0.5),
             )
             scored.to_csv(scored_dir / f"{tool}_scored_predictions.csv", index=False)
             truth_matches.to_csv(scored_dir / f"{tool}_ground_truth_matches.csv", index=False)

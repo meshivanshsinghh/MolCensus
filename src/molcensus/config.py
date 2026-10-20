@@ -41,8 +41,19 @@ def resolve_path(value: str | None) -> Path | None:
     return path if path.is_absolute() else (REPO_ROOT / path).resolve()
 
 
+def _merge(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        both_dicts = isinstance(value, dict) and isinstance(base.get(key), dict)
+        merged[key] = _merge(base[key], value) if both_dicts else value
+    return merged
+
+
 def load_config(config_file: str | Path) -> dict[str, Any]:
-    """Load the YAML config. Every entry under `paths` becomes an absolute Path."""
+    """Load the YAML config. Every entry under `paths` becomes an absolute Path.
+
+    A config can start with `extends: other.yaml` and list only the settings it changes.
+    """
     load_dotenv(REPO_ROOT / ".env")
     config_path = resolve_path(str(config_file))
     if config_path is None or not config_path.exists():
@@ -50,6 +61,9 @@ def load_config(config_file: str | Path) -> dict[str, Any]:
 
     with open(config_path, encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
+    if "extends" in config:
+        with open(config_path.parent / config.pop("extends"), encoding="utf-8") as handle:
+            config = _merge(yaml.safe_load(handle), config)
 
     config["paths"] = {name: resolve_path(value) for name, value in config.get("paths", {}).items()}
     config["papers"] = [int(paper) for paper in config.get("papers", [])]

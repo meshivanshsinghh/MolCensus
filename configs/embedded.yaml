@@ -1,57 +1,12 @@
-# MolCensus configuration for the detection comparison: identical to default.yaml except that
-# molecules are taken from the raster images embedded in each PDF instead of MolDetV2 detections.
-# Relative paths are resolved from the repository root,
-# so the same file works on any machine. Environment variables like ${BIOMINER_DIR}
-# are expanded at load time (put them in .env, see .env.example).
+# Same run as default.yaml, except that molecules come from the images embedded in each PDF
+# instead of MolDetV2 detections. Comparing the two runs shows what detection alone changes.
+extends: default.yaml
 
 paths:
-  pdf_dir: data/pdfs                                              # 1.pdf, 2.pdf, 4.pdf, 6.pdf, 16.pdf, 19.pdf
-  ground_truth_csv: data/ground_truth_SMILES_confirmed_1_2_4_6_16_19.csv
-  work_dir: outputs/work_embedded                                          # page images and crops (not committed)
-  models_dir: models                                              # downloaded weights (not committed)
-  results_dir: results/embedded_detection                                            # metrics, predictions, figures (committed)
-  public_data_dir: data/public                                    # downloaded public benchmark images (not committed)
-
-# Course benchmark papers with curated ground truth (222 molecules in total).
-papers: [1, 2, 4, 6, 16, 19]
-
-render:
-  dpi: 300                  # high enough to keep small atom labels readable in the crops
+  work_dir: outputs/work_embedded
+  results_dir: results/embedded_detection
 
 detection:
-  method: embedded            # "moldet" = MolDetV2 YOLO detector on page images (BioMiner's detector)
-                            # "embedded" = fallback that pulls raster images out of the PDF, no model needed
-  moldet:
-    hf_repo: UniParser/MolDetv2
-    weights_file: moldet_v2_yolo11n_960_doc.pt   # document model, the one BioMiner uses
-    local_weights: ""       # optional path if the file is already downloaded
-    imgsz: 960
-    conf_threshold: 0.4
-    pad_px: 12              # padding around each box so bonds at the edge are not cut off
-    device: cpu
-  embedded:
-    min_width: 150          # skip icons, logos and tiny inline images
-    min_height: 100
+  method: embedded
 
-recognizers:
-  molscribe:
-    enabled: true
-    hf_repo: yujieq/MolScribe
-    checkpoint_file: swin_base_char_aux_1m680k.pth
-    local_checkpoint: ""
-    device: cpu
-  biominer:
-    # End-to-end BioMiner (MinerU + MolDetV2 + MolGlyph + MLLM). Needs one 24 GB GPU in API
-    # mode and its three model servers running. Disabled until class HPC access is ready.
-    enabled: false
-    repo_dir: ${BIOMINER_DIR}
-    python_executable: ${BIOMINER_PYTHON}
-    config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM API key
-    timeout_s: 3600
-
-scoring:
-  fingerprint_radius: 2     # Morgan fingerprint settings for Tanimoto similarity
-  fingerprint_bits: 2048
-  near_match_threshold: 0.85  # Tanimoto at or above this counts as a near match
-  bootstrap_rounds: 2000    # resamples for the paper-level bootstrap interval
-  seed: 0
+public_check: null  # does not depend on the detector, so it is not repeated here

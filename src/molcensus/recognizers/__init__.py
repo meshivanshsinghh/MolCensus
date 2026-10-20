@@ -1,7 +1,7 @@
 """Recognizer wrappers. Every tool writes predictions with the same columns so one scorer handles all of them."""
 
 PREDICTION_COLUMNS = [
-    "tool",          # recognizer name
+    "tool",
     "crop_id",       # which crop the prediction came from (or a generated ID for whole-PDF tools)
     "paper_id",
     "page",          # empty when the tool does not report a page

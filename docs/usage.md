@@ -16,7 +16,7 @@ so any step can be rerun on its own, for example `--steps score,report`.
 | recognize | `recognizers/*_runner.py` | crops (or PDFs for BioMiner) | `results/predictions/<tool>_predictions.csv` |
 | score | `chem.py`, `metrics.py` | predictions, ground truth | `results/per_paper_metrics.csv`, `results/scored/` |
 | public | `public_crops.py` | MolScribe's public evaluation images | `results/public/public_metrics.csv` and per-image files |
-| report | `report.py`, `wandb_log.py` | metrics | `comparison.csv`, `summary_metrics.json`, `RESULTS.md`, figures |
+| report | `report.py`, `figures.py` | metrics | `comparison.csv`, `summary_metrics.json`, `RESULTS.md`, figures |
 
 ```bash
 python run_pipeline.py                                   # every step, all six papers
@@ -31,10 +31,12 @@ Everything lives in `configs/default.yaml`: input paths, which papers to run, re
 detector settings, which recognizers are enabled, the public check and scoring settings. Relative
 paths are resolved from the repository root, so the same file works on any machine.
 Machine-specific values (only needed for BioMiner) go in a `.env` file copied from `.env.example`.
+A config can start with `extends: default.yaml` and list only what it changes, as
+`configs/embedded.yaml` does.
 
-**Fallback detector.** If MolDetV2 cannot be installed, set `detection.method: embedded`. That saves
-the raster images embedded in each PDF instead. It needs no model, but it misses structures drawn as
-vector graphics and can hand MolScribe whole multi-molecule figures, so expect lower scores.
+If MolDetV2 cannot be installed, set `detection.method: embedded`. That saves the raster images
+embedded in each PDF instead. It needs no model, but it misses structures drawn as vector graphics
+and can hand MolScribe whole multi-molecule figures, so expect lower scores.
 
 ## Outputs
 
@@ -42,15 +44,15 @@ vector graphics and can hand MolScribe whole multi-molecule figures, so expect l
 |---|---|
 | `results/RESULTS.md` | Readable summary with all tables and figures |
 | `results/comparison.csv` | Pooled metrics side by side, one column per tool, with interval bounds |
-| `results/per_paper_metrics.csv` | Every metric for every tool and paper, plus an `ALL` row |
+| `results/per_paper_metrics.csv` | Every metric and outcome count for every tool and paper, plus an `ALL` row |
 | `results/summary_metrics.json` | The same numbers in JSON, with run settings |
 | `results/crops_per_paper.csv` | Detected crops compared with the ground-truth count, per paper |
 | `results/public/public_metrics.csv` | Public check: accuracy per tool and set, interval, published value, pass or fail |
 | `results/public/molscribe_*.csv` | Per-image predictions and match flags for the public images |
-| `results/figures/*.png` | Overview, recall by paper, public check |
+| `results/figures/*.png` | Overview, recall by paper, and the outcome breakdown for each tool |
 | `results/data_manifest.csv` | SHA-256 hash of every input file |
 | `results/environment.json` | Python and package versions, git commit, whether the tree was clean |
-| `results/run_log.txt` | Log of every run |
+| `results/run_log.txt` | Log of every run (local only, git-ignored) |
 | `results/predictions/`, `results/scored/` | Per-molecule files with SMILES for the course papers (local only, git-ignored) |
 
 Page images and crops go to `outputs/work/` and are not committed.
