@@ -1,0 +1,164 @@
+2026-10-19 21:25:01,338 INFO pipeline: Steps ['prepare', 'render', 'detect', 'recognize', 'score', 'report'] on papers [16] (config: default.yaml)
+2026-10-19 21:25:01,345 INFO molcensus.data: Loaded 4 ground-truth molecules across 1 papers
+2026-10-19 21:25:03,258 INFO molcensus.render: Paper 16: 13 pages rendered at 300 dpi
+2026-10-19 21:25:03,306 INFO molcensus.weights: Downloading moldet_v2_yolo11n_960_doc.pt from huggingface.co/UniParser/MolDetv2
+2026-10-19 21:25:03,454 INFO httpx2: HTTP Request: HEAD https://huggingface.co/UniParser/MolDetv2/resolve/main/moldet_v2_yolo11n_960_doc.pt "HTTP/1.1 302 Found"
+2026-10-19 21:25:03,871 INFO httpx2: HTTP Request: GET https://huggingface.co/api/models/UniParser/MolDetv2/xet-read-token/88b3836ae4fe692dd2d4c123b4aa0d4a5039eb75 "HTTP/1.1 200 OK"
+2026-10-19 21:25:08,508 INFO molcensus.detect: MolDetV2 found 8 molecule crops on 13 pages
+2026-10-19 21:25:08,515 INFO molcensus.weights: Downloading swin_base_char_aux_1m680k.pth from huggingface.co/yujieq/MolScribe
+2026-10-19 21:25:08,577 INFO httpx2: HTTP Request: HEAD https://huggingface.co/yujieq/MolScribe/resolve/main/swin_base_char_aux_1m680k.pth "HTTP/1.1 302 Found"
+2026-10-19 21:25:08,635 INFO httpx2: HTTP Request: GET https://huggingface.co/api/models/yujieq/MolScribe/xet-read-token/a0189776b7415b82795c7ee81eed311bf5c8724b "HTTP/1.1 200 OK"
+2026-10-19 21:28:37,870 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 8 crops
+2026-10-19 21:28:41,131 INFO pipeline: molscribe: 8 predictions saved
+2026-10-19 21:28:41,158 INFO pipeline: molscribe: exact recall 0.250, exact precision 0.200, stereo-blind recall 0.250, mean best Tanimoto 0.793
+2026-10-19 21:28:41,526 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-19 21:28:41,526 INFO pipeline: Done.
+2026-10-19 22:00:37,230 INFO pipeline: Steps ['prepare', 'render', 'detect', 'recognize', 'score', 'public', 'report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-19 22:00:37,236 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-19 22:00:39,081 INFO molcensus.render: Paper 1: 13 pages rendered at 300 dpi
+2026-10-19 22:00:41,475 INFO molcensus.render: Paper 2: 19 pages rendered at 300 dpi
+2026-10-19 22:00:43,472 INFO molcensus.render: Paper 4: 16 pages rendered at 300 dpi
+2026-10-19 22:00:45,615 INFO molcensus.render: Paper 6: 25 pages rendered at 300 dpi
+2026-10-19 22:00:45,620 INFO molcensus.render: Paper 16: 13 pages rendered at 300 dpi
+2026-10-19 22:00:47,924 INFO molcensus.render: Paper 19: 18 pages rendered at 300 dpi
+2026-10-19 22:00:57,243 INFO molcensus.detect: MolDetV2 found 237 molecule crops on 104 pages
+2026-10-19 22:00:59,574 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 237 crops
+2026-10-19 22:01:10,415 INFO molcensus.recognizers.molscribe_runner: MolScribe: 25/237 crops done
+2026-10-19 22:01:17,660 INFO molcensus.recognizers.molscribe_runner: MolScribe: 50/237 crops done
+2026-10-19 22:01:22,680 INFO molcensus.recognizers.molscribe_runner: MolScribe: 75/237 crops done
+2026-10-19 22:01:28,825 INFO molcensus.recognizers.molscribe_runner: MolScribe: 100/237 crops done
+2026-10-19 22:01:37,666 INFO molcensus.recognizers.molscribe_runner: MolScribe: 125/237 crops done
+2026-10-19 22:01:43,652 INFO molcensus.recognizers.molscribe_runner: MolScribe: 150/237 crops done
+2026-10-19 22:01:51,066 INFO molcensus.recognizers.molscribe_runner: MolScribe: 175/237 crops done
+2026-10-19 22:02:00,033 INFO molcensus.recognizers.molscribe_runner: MolScribe: 200/237 crops done
+2026-10-19 22:02:06,979 INFO molcensus.recognizers.molscribe_runner: MolScribe: 225/237 crops done
+2026-10-19 22:02:10,347 INFO pipeline: molscribe: 237 predictions saved
+2026-10-19 22:02:10,477 INFO pipeline: molscribe: exact recall 0.192, exact precision 0.302, stereo-blind recall 0.192, mean best Tanimoto 0.694
+2026-10-19 22:02:10,478 INFO molcensus.public_crops: Downloading real.zip from huggingface.co/yujieq/MolScribe (one time)
+2026-10-19 22:02:10,733 INFO httpx2: HTTP Request: HEAD https://huggingface.co/yujieq/MolScribe/resolve/main/real.zip "HTTP/1.1 302 Found"
+2026-10-19 22:02:10,810 INFO httpx2: HTTP Request: GET https://huggingface.co/api/models/yujieq/MolScribe/xet-read-token/a0189776b7415b82795c7ee81eed311bf5c8724b "HTTP/1.1 200 OK"
+2026-10-19 22:02:52,751 INFO molcensus.public_crops: uspto: 300 images selected from USPTO.csv
+2026-10-19 22:02:52,822 INFO molcensus.public_crops: acs: 300 images selected from acs.csv
+2026-10-19 22:02:53,937 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 600 crops
+2026-10-19 22:03:01,711 INFO molcensus.recognizers.molscribe_runner: MolScribe: 25/600 crops done
+2026-10-19 22:03:11,217 INFO molcensus.recognizers.molscribe_runner: MolScribe: 50/600 crops done
+2026-10-19 22:03:19,255 INFO molcensus.recognizers.molscribe_runner: MolScribe: 75/600 crops done
+2026-10-19 22:03:28,123 INFO molcensus.recognizers.molscribe_runner: MolScribe: 100/600 crops done
+2026-10-19 22:03:35,885 INFO molcensus.recognizers.molscribe_runner: MolScribe: 125/600 crops done
+2026-10-19 22:03:43,474 INFO molcensus.recognizers.molscribe_runner: MolScribe: 150/600 crops done
+2026-10-19 22:03:51,211 INFO molcensus.recognizers.molscribe_runner: MolScribe: 175/600 crops done
+2026-10-19 22:04:00,246 INFO molcensus.recognizers.molscribe_runner: MolScribe: 200/600 crops done
+2026-10-19 22:04:08,450 INFO molcensus.recognizers.molscribe_runner: MolScribe: 225/600 crops done
+2026-10-19 22:04:16,863 INFO molcensus.recognizers.molscribe_runner: MolScribe: 250/600 crops done
+2026-10-19 22:04:25,017 INFO molcensus.recognizers.molscribe_runner: MolScribe: 275/600 crops done
+2026-10-19 22:04:32,960 INFO molcensus.recognizers.molscribe_runner: MolScribe: 300/600 crops done
+2026-10-19 22:04:39,025 INFO molcensus.recognizers.molscribe_runner: MolScribe: 325/600 crops done
+2026-10-19 22:04:45,436 INFO molcensus.recognizers.molscribe_runner: MolScribe: 350/600 crops done
+2026-10-19 22:04:51,155 INFO molcensus.recognizers.molscribe_runner: MolScribe: 375/600 crops done
+2026-10-19 22:04:57,046 INFO molcensus.recognizers.molscribe_runner: MolScribe: 400/600 crops done
+2026-10-19 22:05:03,825 INFO molcensus.recognizers.molscribe_runner: MolScribe: 425/600 crops done
+2026-10-19 22:05:09,925 INFO molcensus.recognizers.molscribe_runner: MolScribe: 450/600 crops done
+2026-10-19 22:05:16,497 INFO molcensus.recognizers.molscribe_runner: MolScribe: 475/600 crops done
+2026-10-19 22:05:22,307 INFO molcensus.recognizers.molscribe_runner: MolScribe: 500/600 crops done
+2026-10-19 22:05:28,381 INFO molcensus.recognizers.molscribe_runner: MolScribe: 525/600 crops done
+2026-10-19 22:05:33,939 INFO molcensus.recognizers.molscribe_runner: MolScribe: 550/600 crops done
+2026-10-19 22:05:39,357 INFO molcensus.recognizers.molscribe_runner: MolScribe: 575/600 crops done
+2026-10-19 22:05:45,522 INFO molcensus.recognizers.molscribe_runner: MolScribe: 600/600 crops done
+2026-10-19 22:05:45,748 INFO molcensus.public_crops: molscribe on acs: exact 0.348 [0.292, 0.408] (published 0.719) over 253 images
+2026-10-19 22:05:45,748 INFO molcensus.public_crops: molscribe on uspto: exact 0.922 [0.886, 0.947] (published 0.926) over 295 images
+2026-10-19 22:05:45,979 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-19 22:05:45,980 INFO pipeline: Done.
+2026-10-19 22:34:13,225 INFO pipeline: Steps ['prepare', 'recognize', 'score', 'public', 'report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-19 22:34:13,227 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-19 22:34:15,705 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 237 crops
+2026-10-19 22:34:23,461 INFO molcensus.recognizers.molscribe_runner: MolScribe: 25/237 crops done
+2026-10-19 22:34:28,859 INFO molcensus.recognizers.molscribe_runner: MolScribe: 50/237 crops done
+2026-10-19 22:34:33,047 INFO molcensus.recognizers.molscribe_runner: MolScribe: 75/237 crops done
+2026-10-19 22:34:38,406 INFO molcensus.recognizers.molscribe_runner: MolScribe: 100/237 crops done
+2026-10-19 22:34:44,954 INFO molcensus.recognizers.molscribe_runner: MolScribe: 125/237 crops done
+2026-10-19 22:34:50,249 INFO molcensus.recognizers.molscribe_runner: MolScribe: 150/237 crops done
+2026-10-19 22:34:56,983 INFO molcensus.recognizers.molscribe_runner: MolScribe: 175/237 crops done
+2026-10-19 22:35:05,227 INFO molcensus.recognizers.molscribe_runner: MolScribe: 200/237 crops done
+2026-10-19 22:35:11,441 INFO molcensus.recognizers.molscribe_runner: MolScribe: 225/237 crops done
+2026-10-19 22:35:14,505 INFO pipeline: molscribe: 237 predictions saved
+2026-10-19 22:35:14,636 INFO pipeline: molscribe: exact recall 0.233, exact precision 0.302, stereo-blind recall 0.233, mean best Tanimoto 0.744
+2026-10-19 22:35:14,884 INFO molcensus.public_crops: uspto: 300 images selected from USPTO.csv
+2026-10-19 22:35:14,950 INFO molcensus.public_crops: acs: 300 images selected from acs.csv
+2026-10-19 22:35:43,158 INFO pipeline: Steps ['public', 'report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-19 22:35:43,160 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-19 22:35:43,397 INFO molcensus.public_crops: uspto: 300 images selected from USPTO.csv
+2026-10-19 22:35:43,463 INFO molcensus.public_crops: acs: 300 images selected from acs.csv
+2026-10-19 22:35:46,437 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 600 crops
+2026-10-19 22:35:53,517 INFO molcensus.recognizers.molscribe_runner: MolScribe: 25/600 crops done
+2026-10-19 22:36:01,979 INFO molcensus.recognizers.molscribe_runner: MolScribe: 50/600 crops done
+2026-10-19 22:36:09,413 INFO molcensus.recognizers.molscribe_runner: MolScribe: 75/600 crops done
+2026-10-19 22:36:17,456 INFO molcensus.recognizers.molscribe_runner: MolScribe: 100/600 crops done
+2026-10-19 22:36:24,835 INFO molcensus.recognizers.molscribe_runner: MolScribe: 125/600 crops done
+2026-10-19 22:36:32,012 INFO molcensus.recognizers.molscribe_runner: MolScribe: 150/600 crops done
+2026-10-19 22:36:39,304 INFO molcensus.recognizers.molscribe_runner: MolScribe: 175/600 crops done
+2026-10-19 22:36:47,867 INFO molcensus.recognizers.molscribe_runner: MolScribe: 200/600 crops done
+2026-10-19 22:36:55,566 INFO molcensus.recognizers.molscribe_runner: MolScribe: 225/600 crops done
+2026-10-19 22:37:03,408 INFO molcensus.recognizers.molscribe_runner: MolScribe: 250/600 crops done
+2026-10-19 22:37:11,031 INFO molcensus.recognizers.molscribe_runner: MolScribe: 275/600 crops done
+2026-10-19 22:37:18,492 INFO molcensus.recognizers.molscribe_runner: MolScribe: 300/600 crops done
+2026-10-19 22:37:24,260 INFO molcensus.recognizers.molscribe_runner: MolScribe: 325/600 crops done
+2026-10-19 22:37:30,404 INFO molcensus.recognizers.molscribe_runner: MolScribe: 350/600 crops done
+2026-10-19 22:37:35,905 INFO molcensus.recognizers.molscribe_runner: MolScribe: 375/600 crops done
+2026-10-19 22:37:41,537 INFO molcensus.recognizers.molscribe_runner: MolScribe: 400/600 crops done
+2026-10-19 22:37:47,853 INFO molcensus.recognizers.molscribe_runner: MolScribe: 425/600 crops done
+2026-10-19 22:37:53,534 INFO molcensus.recognizers.molscribe_runner: MolScribe: 450/600 crops done
+2026-10-19 22:37:59,724 INFO molcensus.recognizers.molscribe_runner: MolScribe: 475/600 crops done
+2026-10-19 22:38:05,283 INFO molcensus.recognizers.molscribe_runner: MolScribe: 500/600 crops done
+2026-10-19 22:38:11,081 INFO molcensus.recognizers.molscribe_runner: MolScribe: 525/600 crops done
+2026-10-19 22:38:16,460 INFO molcensus.recognizers.molscribe_runner: MolScribe: 550/600 crops done
+2026-10-19 22:38:21,671 INFO molcensus.recognizers.molscribe_runner: MolScribe: 575/600 crops done
+2026-10-19 22:38:27,500 INFO molcensus.recognizers.molscribe_runner: MolScribe: 600/600 crops done
+2026-10-19 22:38:27,735 INFO molcensus.public_crops: molscribe on acs: exact 0.731 [0.673, 0.782] (published 0.719) over 253 images
+2026-10-19 22:38:27,735 INFO molcensus.public_crops: molscribe on uspto: exact 0.922 [0.886, 0.947] (published 0.926) over 295 images
+2026-10-19 22:38:27,925 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-19 22:38:27,926 INFO pipeline: Done.
+2026-10-20 00:48:27,213 INFO pipeline: Steps ['report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-20 00:48:27,218 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-20 00:48:27,411 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-20 00:48:27,412 INFO pipeline: Done.
+2026-10-20 00:48:43,010 INFO pipeline: Steps ['report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-20 00:48:43,017 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-20 00:48:43,203 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-20 00:48:43,203 INFO pipeline: Done.
+2026-10-20 00:52:08,602 INFO pipeline: Steps ['score', 'public', 'report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-20 00:52:08,604 INFO molcensus.data: Loaded 222 ground-truth molecules across 6 papers
+2026-10-20 00:52:08,777 INFO pipeline: molscribe: exact recall 0.233, exact precision 0.302, stereo-blind recall 0.233, mean best Tanimoto 0.744
+2026-10-20 00:52:08,956 INFO molcensus.public_crops: uspto: 300 images selected from USPTO.csv
+2026-10-20 00:52:09,021 INFO molcensus.public_crops: acs: 300 images selected from acs.csv
+2026-10-20 00:52:11,958 INFO molcensus.recognizers.molscribe_runner: MolScribe loaded on cpu; predicting 600 crops
+2026-10-20 00:52:19,198 INFO molcensus.recognizers.molscribe_runner: MolScribe: 25/600 crops done
+2026-10-20 00:52:28,038 INFO molcensus.recognizers.molscribe_runner: MolScribe: 50/600 crops done
+2026-10-20 00:52:37,187 INFO molcensus.recognizers.molscribe_runner: MolScribe: 75/600 crops done
+2026-10-20 00:52:47,676 INFO molcensus.recognizers.molscribe_runner: MolScribe: 100/600 crops done
+2026-10-20 00:52:55,018 INFO molcensus.recognizers.molscribe_runner: MolScribe: 125/600 crops done
+2026-10-20 00:53:03,727 INFO molcensus.recognizers.molscribe_runner: MolScribe: 150/600 crops done
+2026-10-20 00:53:11,693 INFO molcensus.recognizers.molscribe_runner: MolScribe: 175/600 crops done
+2026-10-20 00:53:20,767 INFO molcensus.recognizers.molscribe_runner: MolScribe: 200/600 crops done
+2026-10-20 00:53:29,238 INFO molcensus.recognizers.molscribe_runner: MolScribe: 225/600 crops done
+2026-10-20 00:53:37,642 INFO molcensus.recognizers.molscribe_runner: MolScribe: 250/600 crops done
+2026-10-20 00:53:46,241 INFO molcensus.recognizers.molscribe_runner: MolScribe: 275/600 crops done
+2026-10-20 00:53:54,015 INFO molcensus.recognizers.molscribe_runner: MolScribe: 300/600 crops done
+2026-10-20 00:54:00,260 INFO molcensus.recognizers.molscribe_runner: MolScribe: 325/600 crops done
+2026-10-20 00:54:06,581 INFO molcensus.recognizers.molscribe_runner: MolScribe: 350/600 crops done
+2026-10-20 00:54:12,559 INFO molcensus.recognizers.molscribe_runner: MolScribe: 375/600 crops done
+2026-10-20 00:54:18,377 INFO molcensus.recognizers.molscribe_runner: MolScribe: 400/600 crops done
+2026-10-20 00:54:24,875 INFO molcensus.recognizers.molscribe_runner: MolScribe: 425/600 crops done
+2026-10-20 00:54:30,799 INFO molcensus.recognizers.molscribe_runner: MolScribe: 450/600 crops done
+2026-10-20 00:54:37,065 INFO molcensus.recognizers.molscribe_runner: MolScribe: 475/600 crops done
+2026-10-20 00:54:42,808 INFO molcensus.recognizers.molscribe_runner: MolScribe: 500/600 crops done
+2026-10-20 00:54:51,033 INFO molcensus.recognizers.molscribe_runner: MolScribe: 525/600 crops done
+2026-10-20 00:54:56,492 INFO molcensus.recognizers.molscribe_runner: MolScribe: 550/600 crops done
+2026-10-20 00:55:02,190 INFO molcensus.recognizers.molscribe_runner: MolScribe: 575/600 crops done
+2026-10-20 00:55:09,065 INFO molcensus.recognizers.molscribe_runner: MolScribe: 600/600 crops done
+2026-10-20 00:55:09,321 INFO molcensus.public_crops: molscribe on acs: exact 0.731 [0.673, 0.782] (published 0.719) over 253 images
+2026-10-20 00:55:09,322 INFO molcensus.public_crops: molscribe on uspto: exact 0.922 [0.886, 0.947] (published 0.926) over 295 images
+2026-10-20 00:55:09,638 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-20 00:55:09,638 INFO pipeline: Done.
+2026-10-20 00:56:38,083 INFO pipeline: Steps ['report'] on papers [1, 2, 4, 6, 16, 19] (config: default.yaml)
+2026-10-20 00:56:38,302 INFO molcensus.report: Reports written to /Users/shivanshsingh/Professional/MolCensus/results
+2026-10-20 00:56:38,302 INFO pipeline: Done.

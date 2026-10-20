@@ -1,0 +1,22 @@
+metric,molscribe
+Predictions,237.0
+Valid SMILES rate,0.9324894514767932
+Exact precision,0.301775147928994
+Exact recall,0.2328767123287671
+Exact F1,0.2628865979381443
+Stereo-blind recall,0.2328767123287671
+Mean best Tanimoto,0.7441376619877988
+Near-match recall (Tanimoto >= threshold),0.3242009132420091
+Mean confidence,0.8142542265036148
+Exact recall 95% CI (molecules) low,0.1817959968367358
+Exact recall 95% CI (molecules) high,0.2931673852247822
+Exact recall 95% CI (papers) low,0.1694915254237288
+Exact recall 95% CI (papers) high,0.4931506849315068
+Exact precision 95% CI (molecules) low,0.2376053398689164
+Exact precision 95% CI (molecules) high,0.3747564989476647
+Exact precision 95% CI (papers) low,0.1849710982658959
+Exact precision 95% CI (papers) high,0.5149961300309581
+Stereo-blind recall 95% CI (molecules) low,0.1817959968367358
+Stereo-blind recall 95% CI (molecules) high,0.2931673852247822
+Stereo-blind recall 95% CI (papers) low,0.1694915254237288
+Stereo-blind recall 95% CI (papers) high,0.4931506849315068
