@@ -1,7 +1,7 @@
 {
   "python": "3.10.20",
   "platform": "macOS-26.5.1-arm64-arm-64bit",
-  "git_commit": "ac0763c79ba21508f50d77ba7b90f1761bf1d43e",
+  "git_commit": "2d88158530aaa0e3581e44d85c658514b605d66e",
   "git_dirty": false,
   "rdkit": "2026.9.1",
   "pymupdf": "1.28.2",
