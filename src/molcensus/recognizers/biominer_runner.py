@@ -34,6 +34,7 @@ import json
 import logging
 import math
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -139,6 +140,7 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
             f"--config_path={settings['config_path']}",
             f"--pdf={pdf_path}",
             f"--output_dir={paper_output}",
+            *shlex.split(expand(str(settings.get("extra_args", "")))),  # e.g. --biovista_evaluate
         ]
         log.info("BioMiner: paper %s", paper_id)
         started = time.perf_counter()
@@ -151,7 +153,9 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
             output = completed.stdout + "\n" + completed.stderr
             (paper_output / "biominer_stdout.log").write_text(output)
             # BioMiner tries each MLLM call once and uses an empty answer if it fails (for example on a
-            # rate limit), so failed calls lose content silently. Count them from its log line.
+            # rate limit), so failed calls lose content silently. Count them from its log line. With
+            # scripts/aws/patch_biominer.py it retries first and prints that line only for a call that
+            # failed every try, so the count is always "calls lost".
             api_failures = output.count(" try failed:")
             if api_failures:
                 log.warning("BioMiner: paper %s: %d MLLM calls failed; their content is missing", paper_id, api_failures)

@@ -70,6 +70,12 @@ abbreviation such as `Me` or `Ph` when run on macOS, which made its ACS accuracy
 The public check caught it, and a three-line patch fixed it
 ([details](docs/methods.md#a-molscribe-bug-the-check-caught)).
 
+BioMiner gets two local edits on the GPU instance, made by `scripts/aws/patch_biominer.py` and never
+pushed upstream. Its model servers use one GPU instead of four. Each MLLM call is tried up to 4 times
+(waiting 15, 30 and 60 seconds), because BioMiner tries once and silently uses an empty answer when a
+call fails, for example on a rate limit. Prompts, models and parsing are unchanged. Calls that still
+fail after every try are counted per paper in `run_info.json`.
+
 Every number, with its interval, is in [results/RESULTS.md](results/RESULTS.md). The full run takes
 about 40 minutes on a laptop CPU (Apple M5); package versions are in `results/environment.json`.
 

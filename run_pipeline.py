@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/default.yaml", help="YAML config (relative to repo root)")
     parser.add_argument("--steps", default=",".join(STEPS), help=f"comma-separated subset of {STEPS}")
     parser.add_argument("--papers", type=int, nargs="*", help="override the paper list in the config")
+    parser.add_argument("--tools", help="comma-separated recognizers to run; overrides 'enabled' in the config")
     parser.add_argument("--force", action="store_true", help="re-render pages even if images already exist")
     parser.add_argument("--wandb", action="store_true", help="publish metrics (no SMILES) to Weights & Biases")
     parser.add_argument("--wandb-project", default="molcensus", help="W&B project name")
@@ -58,6 +59,13 @@ def enabled_tools(config: dict) -> list[str]:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
+    if args.tools:
+        chosen = {tool.strip() for tool in args.tools.split(",")}
+        unknown_tools = chosen - set(config["recognizers"])
+        if unknown_tools:
+            raise SystemExit(f"Unknown tools: {sorted(unknown_tools)}. Choose from {sorted(config['recognizers'])}.")
+        for name, settings in config["recognizers"].items():
+            settings["enabled"] = name in chosen
     paths = config["paths"]
     papers = args.papers or config["papers"]
     steps = [step.strip() for step in args.steps.split(",") if step.strip()]
@@ -76,7 +84,9 @@ def main() -> None:
     # The private course inputs are only needed for the paper steps, so "public,report" runs on a fresh clone.
     if set(steps) & {"prepare", "render", "detect", "recognize", "score"}:
         ground_truth = data.load_ground_truth(paths["ground_truth_csv"], papers)
-        pdfs = data.find_pdfs(paths["pdf_dir"], papers)
+    # PDFs are only needed by steps that read them, so crop readers can run where the PDFs are not.
+    needs_pdfs = set(steps) & {"prepare", "render", "detect"} or ("recognize" in steps and "biominer" in enabled_tools(config))
+    pdfs = data.find_pdfs(paths["pdf_dir"], papers) if needs_pdfs else {}
 
     # 1. Record exactly which input files were used.
     if "prepare" in steps:
@@ -119,14 +129,18 @@ def main() -> None:
     if "recognize" in steps:
         for tool in enabled_tools(config):
             settings = config["recognizers"][tool]
-            if tool in CROP_TOOLS:
-                outputs = {tool: run_crop_tool(tool, pd.read_csv(crops_index), settings, paths["models_dir"])}
-            elif tool == "biominer":
-                from molcensus.recognizers.biominer_runner import run_biominer
+            try:  # one tool that cannot start (missing environment or weights) must not stop the others
+                if tool in CROP_TOOLS:
+                    outputs = {tool: run_crop_tool(tool, pd.read_csv(crops_index), settings, paths["models_dir"])}
+                elif tool == "biominer":
+                    from molcensus.recognizers.biominer_runner import run_biominer
 
-                outputs = run_biominer(pdfs, settings, work_dir / "biominer_output")  # biominer and biominer_bioactivity
-            else:
-                log.warning("No runner for recognizer '%s'; skipping", tool)
+                    outputs = run_biominer(pdfs, settings, work_dir / "biominer_output")  # biominer and biominer_bioactivity
+                else:
+                    log.warning("No runner for recognizer '%s'; skipping", tool)
+                    continue
+            except Exception:
+                log.exception("%s failed; continuing with the next tool", tool)
                 continue
             for name, predictions in outputs.items():
                 predictions.to_csv(predictions_dir / f"{name}_predictions.csv", index=False)

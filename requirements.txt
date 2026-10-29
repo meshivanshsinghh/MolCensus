@@ -19,7 +19,8 @@ torch>=2.0
 # MolScribe from its GitHub repo (pins numpy<2, timm==0.4.12, albumentations==1.1.0 itself).
 # If importing it fails with "No module named 'torch._six'", run:
 #   pip install "torch==1.13.1" "torchvision==0.14.1"
-MolScribe @ git+https://github.com/thomas0809/MolScribe.git@main
+# Pinned to the commit the abbreviation patch was checked against (still upstream main on 2026-10-28).
+MolScribe @ git+https://github.com/thomas0809/MolScribe.git@7296a30413eb55436702011efdff78131f66d162
 
 # Optional: publish metrics to Weights & Biases (--wandb)
 wandb>=0.17

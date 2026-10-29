@@ -262,7 +262,11 @@ def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFr
         tool_settings = config["recognizers"].get(tool, {})
         if not tool_settings.get("enabled"):
             continue
-        predictions = run_crop_tool(tool, crops, tool_settings, models_dir)
+        try:  # one tool that cannot start must not stop the others
+            predictions = run_crop_tool(tool, crops, tool_settings, models_dir)
+        except Exception:
+            log.exception("%s failed on the public check; continuing with the next tool", tool)
+            continue
         predictions.to_csv(out_dir / f"{tool}_predictions.csv", index=False)
         scored = score_items(predictions, items, featurizer)
         scored["image_path"] = scored["image_path"].map(lambda path: os.path.relpath(path, config["repo_root"]))
