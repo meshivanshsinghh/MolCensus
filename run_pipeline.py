@@ -125,16 +125,17 @@ def main() -> None:
                     settings["hf_repo"], settings["checkpoint_file"], paths["models_dir"],
                     settings.get("local_checkpoint", ""),
                 )
-                predictions = run_molscribe(pd.read_csv(crops_index), checkpoint, settings["device"])
+                outputs = {tool: run_molscribe(pd.read_csv(crops_index), checkpoint, settings["device"])}
             elif tool == "biominer":
                 from molcensus.recognizers.biominer_runner import run_biominer
 
-                predictions = run_biominer(pdfs, settings, work_dir / "biominer_output")
+                outputs = run_biominer(pdfs, settings, work_dir / "biominer_output")  # biominer and biominer_bioactivity
             else:
                 log.warning("No runner for recognizer '%s'; skipping", tool)
                 continue
-            predictions.to_csv(predictions_dir / f"{tool}_predictions.csv", index=False)
-            log.info("%s: %d predictions saved", tool, len(predictions))
+            for name, predictions in outputs.items():
+                predictions.to_csv(predictions_dir / f"{name}_predictions.csv", index=False)
+                log.info("%s: %d predictions saved", name, len(predictions))
 
     # 5. Score every tool that has a predictions file.
     per_paper_file = results_dir / "per_paper_metrics.csv"
@@ -146,24 +147,27 @@ def main() -> None:
         featurizer = Featurizer(scoring["fingerprint_radius"], scoring["fingerprint_bits"])
         all_metrics = []
         for tool in enabled_tools(config):
-            prediction_file = predictions_dir / f"{tool}_predictions.csv"
-            if not prediction_file.exists():
+            # A tool can write more than one file: BioMiner writes biominer and biominer_bioactivity.
+            prediction_files = sorted(predictions_dir.glob(f"{tool}*_predictions.csv"))
+            if not prediction_files:
                 log.warning("No predictions for %s yet; run the recognize step first", tool)
-                continue
-            predictions = pd.read_csv(prediction_file, dtype={"pred_smiles": str, "pred_label": str})
-            scored, truth_matches, per_paper = score_tool(
-                predictions, ground_truth, featurizer, scoring["near_match_threshold"],
-                scoring.get("bootstrap_rounds", 2000), scoring.get("seed", 0), scoring.get("related_threshold", 0.5),
-            )
-            scored.to_csv(scored_dir / f"{tool}_scored_predictions.csv", index=False)
-            truth_matches.to_csv(scored_dir / f"{tool}_ground_truth_matches.csv", index=False)
-            all_metrics.append(per_paper)
-            pooled = per_paper[per_paper["paper_id"] == "ALL"].iloc[0]
-            log.info(
-                "%s: exact recall %.3f, exact precision %.3f, stereo-blind recall %.3f, mean best Tanimoto %.3f",
-                tool, pooled["exact_recall"], pooled["exact_precision"],
-                pooled["stereo_blind_recall"], pooled["mean_best_tanimoto"],
-            )
+            for prediction_file in prediction_files:
+                name = prediction_file.name.removesuffix("_predictions.csv")
+                predictions = pd.read_csv(prediction_file, dtype={"pred_smiles": str, "pred_label": str})
+                scored, truth_matches, per_paper = score_tool(
+                    predictions, ground_truth, featurizer, scoring["near_match_threshold"],
+                    scoring.get("bootstrap_rounds", 2000), scoring.get("seed", 0),
+                    scoring.get("related_threshold", 0.5), tool=name,
+                )
+                scored.to_csv(scored_dir / f"{name}_scored_predictions.csv", index=False)
+                truth_matches.to_csv(scored_dir / f"{name}_ground_truth_matches.csv", index=False)
+                all_metrics.append(per_paper)
+                pooled = per_paper[per_paper["paper_id"] == "ALL"].iloc[0]
+                log.info(
+                    "%s: exact recall %.3f, exact precision %.3f, stereo-blind recall %.3f, mean best Tanimoto %.3f",
+                    name, pooled["exact_recall"], pooled["exact_precision"],
+                    pooled["stereo_blind_recall"], pooled["mean_best_tanimoto"],
+                )
         if all_metrics:
             pd.concat(all_metrics, ignore_index=True).to_csv(per_paper_file, index=False)
 

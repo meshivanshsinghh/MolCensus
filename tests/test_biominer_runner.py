@@ -1,0 +1,65 @@
+"""BioMiner wrapper against a fake BioMiner that writes the upstream file names. Run with: pytest -q"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from molcensus.recognizers.biominer_runner import run_biominer  # noqa: E402
+
+# Writes the tables BioMiner 17c6161 writes (runner/extractor.py), plus look-alikes that must be ignored.
+# Paper 2: the final merge fails after the structure tables exist. Paper 3: the structure table is empty.
+FAKE_BIOMINER = r'''
+import sys, pathlib
+args = dict(a.lstrip("-").split("=", 1) for a in sys.argv[1:])
+name = pathlib.Path(args["pdf"]).name.split(".")[0]
+out = pathlib.Path(args["output_dir"]) / "extraction_gemini-2.5-flash" / name
+out.mkdir(parents=True)
+s = "moldetv2_bbox_molglyph_ocsr__updated_v3_with_index_split4seg0.125_bg_lo"
+(out / f"{name}_structure_full_output_{s}.csv").write_text("ligand,smiles\n9z,CCCC\n")
+(out / f"{name}_structure_merged_output_{s}_{s}_clean_new.csv").write_text(",ligand,smiles\n0,x,CCCl\n")
+(out / f"{name}_page_2_{s}.csv").write_text("ligand,smiles\ny,CCBr\n")
+(out / f"{name}_merged_updated_v3_txtmu_updated_v3_imgmuc_output.csv").write_text("protein,ligand,type,value,unit\n")
+merged = "" if name == "3" else "ligand,smiles\n9a,CCO\n9a,CCO\n9b,c1ccccc1\n10,\n"
+(out / f"{name}_structure_merged_output_{s}_{s}.csv").write_text(merged)
+if name == "2":
+    print("ValueError: cannot map identifiers", file=sys.stderr)
+    sys.exit(1)
+(out / f"{name}_merge_{s}_{s}.csv").write_text(
+    ",protein,ligand,type,value,unit,smiles\n0,EGFR,9a,IC50,5,nM,CCO\n1,EGFR,9a,Ki,2,nM,CCO\n")
+(out / f"{name}_merge_failed_ligand_{s}_{s}.json").write_text("[]")
+'''
+
+
+def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
+    repo = tmp_path / "BioMiner"
+    repo.mkdir()
+    (repo / "example_open_source.py").write_text(FAKE_BIOMINER)
+    pdfs = {}
+    for paper in (1, 2, 3):
+        pdfs[paper] = tmp_path / f"{paper}.pdf"
+        pdfs[paper].write_bytes(b"%PDF-1.4")
+    settings = {"repo_dir": str(repo), "python_executable": sys.executable, "config_path": "c.yaml", "timeout_s": 60}
+
+    outputs = run_biominer(pdfs, settings, tmp_path / "out")
+    structure, bioactivity = outputs["biominer"], outputs["biominer_bioactivity"]
+
+    def pairs(frame, paper):
+        rows = frame[frame["paper_id"] == paper]
+        return sorted(zip(rows["pred_label"], rows["pred_smiles"]))
+
+    # Only the structure_merged table counts, deduplicated; empty SMILES and look-alike files are ignored.
+    assert pairs(structure, 1) == [("9a", "CCO"), ("9b", "c1ccccc1")]
+    assert (structure.loc[structure["paper_id"] == 1, "error"] == "").all()
+    assert pairs(bioactivity, 1) == [("9a", "CCO")]  # two measurements, one prediction
+
+    # Failed final merge: structure rows are kept and say so; the bioactivity table is an error row.
+    assert pairs(structure, 2) == [("9a", "CCO"), ("9b", "c1ccccc1")]
+    assert structure.loc[structure["paper_id"] == 2, "error"].str.startswith("partial run: exit code 1").all()
+    paper2 = bioactivity[bioactivity["paper_id"] == 2]
+    assert len(paper2) == 1 and paper2["pred_smiles"].iloc[0] == "" and "exit code 1" in paper2["error"].iloc[0]
+
+    # An unreadable table is skipped without stopping the run.
+    paper3 = structure[structure["paper_id"] == 3]
+    assert len(paper3) == 1 and paper3["error"].iloc[0] == "no readable output table"
+    assert pairs(bioactivity, 3) == [("9a", "CCO")]

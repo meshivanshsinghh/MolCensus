@@ -118,9 +118,10 @@ def score_tool(
     bootstrap_rounds: int = 2000,
     seed: int = 0,
     related_threshold: float = 0.5,
+    tool: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Score one tool. Returns (scored predictions, ground-truth match table, per-paper metrics)."""
-    tool = predictions["tool"].iloc[0] if len(predictions) else "unknown"
+    tool = tool or (predictions["tool"].iloc[0] if len(predictions) else "unknown")
 
     preds = predictions.join(featurize_column(predictions["pred_smiles"], featurizer))
     truth = ground_truth.join(

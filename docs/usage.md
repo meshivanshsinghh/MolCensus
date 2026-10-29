@@ -112,7 +112,16 @@ One run is created in the `molcensus` project (`--wandb-project` and `--wandb-en
 5. Set `recognizers.biominer.enabled: true`.
 
 The wrapper calls `example_open_source.py --pdf <paper> --output_dir <dir>` for each paper and reads
-every output table that has a `smiles` column.
+two tables from `<dir>/extraction_<model>/<name>/`:
+
+- `<name>_structure_merged_output_*.csv` (every structure linked to a label) becomes
+  `results/predictions/biominer_predictions.csv`.
+- `<name>_merge_*.csv` (only structures with a bioactivity value) becomes
+  `results/predictions/biominer_bioactivity_predictions.csv`, scored as its own tool.
+
+If BioMiner fails after writing the structure table (its final merge step can raise), the structure
+rows are kept and their `error` column starts with `partial run:`. A missing or unreadable table
+becomes one error row for that paper.
 
 ## Troubleshooting
 

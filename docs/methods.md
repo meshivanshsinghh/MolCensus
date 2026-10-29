@@ -109,6 +109,8 @@ because their images and SMILES are public. The optional W&B upload follows the 
 - There is no detection ground truth, so missed detections and misreadings can't be separated.
 - MolScribe can't reject a crop that has no complete molecule, so detection errors flow straight
   through.
-- BioMiner only reports ligands with bioactivity values, so molecules without one may be missing
-  from its output even when it reads them correctly.
+- BioMiner's predictions are the structures its MLLM linked to a compound label (the
+  `_structure_merged_output_` table). A structure it read but could not link to a label is not in
+  that table. Its final `_merge_` table keeps only structures with a bioactivity value; it is scored
+  separately as `biominer_bioactivity`.
 - Everything ran once, on CPU.
