@@ -125,9 +125,9 @@ PYTHONPATH=src python -m molcensus.convert biovista <folder of *_structure.csv> 
 
 BioVista papers keep BioVista's names, `<index>_<pdb id>.pdf` (for example `68_6r8r.pdf`), because
 BioMiner's evaluator reads the PDB ID from the file name; the index becomes `paperID`. The BioVista
-structure labels sit in the "Bioactivity Triplet Extraction" download of BioMiner's
-`BioVista/README.md`. On 2026-10-29 that Google Drive link returned 404, so the converter was tested on
-files built from the format BioMiner's evaluator reads, not on the real labels.
+structure labels go in `data/biovista/labels/`. Use the "Bioactivity Triplet Extraction" link in
+BioMiner's main README: the one in its `BioVista/README.md` is dead (both links are in
+[methods.md](methods.md)).
 
 For more public single-molecule sets, add `clef`, `uob` or `staker` (already in the downloaded
 archive) or `biovista` (downloaded on first use) to `public_check.datasets`.

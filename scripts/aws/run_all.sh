@@ -92,8 +92,17 @@ biominer_biovista() {
   cp -n "$BIOMINER"/example/pdfs/*.pdf data/biovista/pdfs/  # 40_6s8a and 68_6r8r, shipped with BioMiner
   local papers
   papers=$(ls data/biovista/pdfs/*.pdf | xargs -n1 basename | cut -d_ -f1 | sort -n | tr '\n' ' ')
-  # --biovista_evaluate needs BioVista's labels inside the BioMiner clone; without them it would fail every paper.
-  if [ -d "$BIOMINER/BioVista/bioactivity_extraction/labels" ] && [ -d "$BIOMINER/BioVista/structure_annotation/labels" ]; then
+  # --biovista_evaluate needs BioVista's labels inside the BioMiner clone, where its config looks for them:
+  # the bioactivity/structure labels (data/biovista/labels) and the PDBbind index plus ligand files
+  # (data/biovista/structure_annotation), both copied up from the Mac. Without them it would fail every paper.
+  if [ -d data/biovista/labels ] && [ -d data/biovista/structure_annotation/labels ]; then
+    mkdir -p "$BIOMINER/BioVista/bioactivity_extraction/labels" "$BIOMINER/BioVista/structure_annotation"
+    cp -a data/biovista/labels/. "$BIOMINER/BioVista/bioactivity_extraction/labels/"
+    cp -a data/biovista/structure_annotation/. "$BIOMINER/BioVista/structure_annotation/"
+  fi
+  if [ -d "$BIOMINER/BioVista/bioactivity_extraction/labels" ] && [ -d "$BIOMINER/BioVista/structure_annotation/labels" ] \
+     && [ -d "$BIOMINER/BioVista/structure_annotation/data" ]; then
+    echo "BioVista labels in place; running with --biovista_evaluate"
     export BIOMINER_EXTRA_ARGS=--biovista_evaluate
   else
     echo "BioVista labels not in $BIOMINER/BioVista; running without --biovista_evaluate"

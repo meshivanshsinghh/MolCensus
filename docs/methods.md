@@ -79,6 +79,23 @@ rule [0.401, 0.513] against the published 0.455, and 0.450 under our rule. The f
 splits also fell inside their intervals. This was a check of the setup, not a result; the full set
 runs on the GPU instance.
 
+**BioVista paper labels.** Paper-level scoring and BioMiner's `--biovista_evaluate` need two more
+downloads, both kept locally in `data/biovista/` and never committed:
+
+| Download | Google Drive link | Status on 2026-10-29 |
+|---|---|---|
+| Bioactivity Triplet Extraction (`labels/`: 500 `<name>_structure.csv`, 503 `<name>_data.csv`, 83 `.xlsx`) | https://drive.google.com/file/d/14icAlg_jEy3uE7FOcDD-EYn3UIKQxC__/view (BioMiner's main README) | works |
+| The same, as linked from BioMiner's `BioVista/README.md` | https://drive.google.com/file/d/1xITA_Mub9u1MCZjlgs26qL_dMCrzS9Rn/view | dead: HTTP 404 |
+| Structure-Bioactivity Annotation (`structure_annotation/`: PDBbind index files and ligand structures for 501 PDB IDs, 46 MB) | https://drive.google.com/file/d/1cLC3NePtxctIurnCVaNLw0JzBWYrWTVW/view (both READMEs) | works |
+
+Both READMEs are at BioMiner commit `17c6161`. The structure files have the columns `smiles`, `ligand`,
+`backbone` and `groups` (`backbone` is filled for compounds defined by a scaffold plus R groups).
+Three `_data.csv` files and their `.xlsx` copies (`398_6j5t`, `404_6jyw`, `411_6iqj`) carry PDB IDs
+that do not match BioVista's paper list, which has `398_6j5l`, `404_6iyw` and `411_6iqg`; those three
+have full pairs. Each of the 83 `.xlsx` files has a bioactivity table in its first sheet; the other two sheets are empty. Every paper
+in BioVista's `file_names.txt` has a structure file. `convert.py` turns them into the ground-truth
+format; 68_6r8r gives 50 unique molecules.
+
 Reference SMILES that RDKit cannot read are left out. In ACS that is 47 of the 300 labels, mostly
 placeholders such as `[R]`, `[Ar]` or `[X]`; in USPTO it is 5 malformed labels. That leaves 253 ACS
 and 295 USPTO images. The published numbers used the authors' own handling of these labels, so the

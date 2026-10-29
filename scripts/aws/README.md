@@ -38,6 +38,8 @@ placeholder (`placeholder_ground_truth.csv`).
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
+   BioVista's labels go in `data/biovista/labels/` (500 `<name>_structure.csv` plus `<name>_data.csv`)
+   and `data/biovista/structure_annotation/` (`labels/INDEX_general_PL_*.2020`, `data/<pdb id>/`).
 
 ## Launch
 
@@ -76,8 +78,8 @@ scp -i ~/.ssh/molcensus.pem ~/.molcensus/molcensus_keys.env $HOST:molcensus_keys
 # The 237 course crops and their index (run_all.sh rewrites the Mac paths in it).
 $SSH $HOST 'mkdir -p molcensus/outputs/work molcensus/data/biovista/pdfs'
 rsync -a -e "$SSH" outputs/work/crops_moldet outputs/work/crops_index.csv $HOST:molcensus/outputs/work/
-# BioVista PDFs, if any.
-rsync -a -e "$SSH" data/biovista/pdfs/ $HOST:molcensus/data/biovista/pdfs/
+# BioVista PDFs and labels (labels/ and structure_annotation/, for --biovista_evaluate in stage c).
+rsync -az --exclude download/ -e "$SSH" data/biovista/ $HOST:molcensus/data/biovista/
 # Only with permission to send the course PDFs to Gemini (stage d is skipped otherwise):
 # rsync -a -e "$SSH" data/pdfs/*.pdf $HOST:molcensus/data/pdfs/ && $SSH $HOST touch COURSE_PDFS_PERMISSION_GIVEN
 ```
@@ -112,9 +114,10 @@ $SSH $HOST "mkdir -p runs && tmux new -d -s run 'bash molcensus/scripts/aws/run_
 
 The estimates are extrapolated from Mac CPU timings, not measured on a GPU. The instance stops
 itself after the last stage, or after 10 hours at the latest (`sudo shutdown -c` cancels that).
-`--biovista_evaluate` is added in stage c only if BioVista's labels are inside the BioMiner clone
-(`BioVista/bioactivity_extraction/labels` and `BioVista/structure_annotation/labels`); the labels
-download link returned 404 on 2026-10-29.
+Stage c copies `data/biovista/labels/` to `BioVista/bioactivity_extraction/labels/` and
+`data/biovista/structure_annotation/` to `BioVista/structure_annotation/` inside the BioMiner clone,
+then adds `--biovista_evaluate`. If either folder is missing it runs without that flag. Where the two
+label sets come from is in docs/methods.md (BioVista paragraph).
 
 ## Check progress
 
