@@ -38,7 +38,8 @@ def resolve_path(value: str | None) -> Path | None:
     if not text:
         return None
     path = Path(text)
-    return path if path.is_absolute() else (REPO_ROOT / path).resolve()
+    # normpath, not resolve(): following symlinks would turn a venv's bin/python into the base interpreter.
+    return path if path.is_absolute() else Path(os.path.normpath(REPO_ROOT / path))
 
 
 def _merge(base: dict, override: dict) -> dict:

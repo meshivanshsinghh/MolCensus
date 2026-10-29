@@ -127,7 +127,7 @@ configs/              settings: default.yaml, and embedded.yaml for the detectio
 src/molcensus/
   render.py           PDF pages to images
   detect.py           MolDetV2 detection and cropping
-  recognizers/        one wrapper per tool (MolScribe, BioMiner), same output columns
+  recognizers/        one wrapper per tool (MolScribe, MolSight, MolGlyph, BioMiner), same output columns
   chem.py, metrics.py InChIKeys, fingerprints, scores and intervals
   public_crops.py     the public check on USPTO and ACS images
   report.py           tables, JSON and RESULTS.md

@@ -1,12 +1,15 @@
-"""BioMiner wrapper against a fake BioMiner that writes the upstream file names. Run with: pytest -q"""
+"""Runners for tools that run as subprocesses (BioMiner, crop readers), tested with fake tools. Run with: pytest -q"""
 
 import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from molcensus.recognizers.biominer_runner import run_biominer  # noqa: E402
+from molcensus.recognizers.subprocess_reader import run_crop_reader  # noqa: E402
 
 # Writes the tables BioMiner 17c6161 writes (runner/extractor.py), plus look-alikes that must be ignored.
 # Paper 2: the final merge fails after the structure tables exist. Paper 3: the structure table is empty.
@@ -73,3 +76,35 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x"
     assert info["api_failures"] == 2 and info["n_predictions"] == {"biominer": 2, "biominer_bioactivity": 1}
     assert json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())["api_failures"] == 0
+
+
+# Writes one good row and one per-crop error, then crashes before the third crop.
+FAKE_WORKER = r'''
+import argparse, csv, sys
+parser = argparse.ArgumentParser()
+for name in ("--checkpoint", "--device", "--crops", "--out"):
+    parser.add_argument(name)
+args = parser.parse_args()
+crops = list(csv.DictReader(open(args.crops)))
+with open(args.out, "w", newline="") as handle:
+    writer = csv.writer(handle)
+    writer.writerow(["crop_id", "pred_smiles", "confidence", "runtime_s", "error"])
+    writer.writerow([crops[0]["crop_id"], "CCO", "", 0.1, ""])
+    writer.writerow([crops[1]["crop_id"], "", "", 0.1, "OSError: unreadable image"])
+sys.exit(3)
+'''
+
+
+def test_crop_reader_keeps_rows_written_before_a_crash(tmp_path):
+    worker = tmp_path / "fake_worker.py"
+    worker.write_text(FAKE_WORKER)
+    crops = pd.DataFrame({"crop_id": ["a", "b", "c"], "paper_id": [1, 1, 2], "page": [3, 3, 1],
+                          "image_path": ["a.png", "b.png", "c.png"]})
+    settings = {"repo_dir": str(tmp_path), "python_executable": sys.executable, "device": "cpu"}
+
+    predictions = run_crop_reader("fake", crops, settings, tmp_path / "weights.pt", worker=worker).set_index("crop_id")
+
+    assert predictions.loc["a", "pred_smiles"] == "CCO" and predictions.loc["a", "error"] == ""
+    assert predictions.loc["b", "pred_smiles"] == "" and predictions.loc["b", "error"] == "OSError: unreadable image"
+    assert predictions.loc["c", "pred_smiles"] == "" and predictions.loc["c", "error"] == "fake worker exit code 3"
+    assert (predictions["tool"] == "fake").all() and predictions.loc["c", "paper_id"] == 2

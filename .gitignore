@@ -31,3 +31,6 @@ results/**/run_log.txt
 TASKS.md
 reports/
 *.zip
+
+# Third-party tool clones and their own environments (MolSight)
+tools/

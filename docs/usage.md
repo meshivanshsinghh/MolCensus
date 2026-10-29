@@ -69,17 +69,44 @@ python run_pipeline.py --config configs/embedded.yaml --steps prepare,detect,rec
 
 Results go to `results/embedded_detection/`.
 
+## Readers in their own environment (MolSight, MolGlyph)
+
+MolSight and MolGlyph pin packages that clash with MolScribe's, so each runs in its own Python
+environment. `recognizers/subprocess_reader.py` writes the crop list to a CSV, runs
+`recognizers/<tool>_worker.py` with that tool's Python from the tool's repo folder, and reads the
+SMILES back. Both readers work on the course crops and in the public check, like MolScribe.
+
+**MolSight** (base checkpoint, `Robert-zwr/MolSight`, downloaded into `models/` on first use):
+
+```bash
+git clone https://github.com/hustvl/MolSight.git tools/MolSight && git -C tools/MolSight checkout 86e979b
+uv venv --python 3.10 tools/molsight-env
+uv pip install --python tools/molsight-env/bin/python -r tools/MolSight/requirements.txt "datasets>=3" "numpy<2"
+```
+
+Its requirements are unpinned. Without the last two pins the resolver picks `datasets` 1.1.1, which
+fails with current pyarrow, and NumPy 2, which the old `rdkit-pypi` build cannot load cleanly.
+Then set `recognizers.molsight.enabled: true`. On 5 course crops on a Mac CPU it took 0.6 to 1.7 s
+per crop.
+
+**MolGlyph** runs inside BioMiner's environment through BioMiner's own `MolGlyph` class and the same
+caption-to-SMILES steps BioMiner uses, so it needs the BioMiner clone and `BIOMINER_DIR` /
+`BIOMINER_PYTHON` in `.env`. Its weights are gated: accept the terms at
+https://huggingface.co/jiaxianustc/MolGlyph and run `hf auth login`. Then set
+`recognizers.molglyph.enabled: true`. It has not been run on this Mac (no BioMiner environment here).
+
 ## Add a recognizer
 
-1. Create `src/molcensus/recognizers/<tool>_runner.py` with a function that takes the crops table
-   (or the PDFs, for a whole-document tool) and returns a DataFrame with exactly the columns in
-   `PREDICTION_COLUMNS` (`recognizers/__init__.py`). Catch errors per item and record them in the
-   `error` column, so one bad crop never stops a run.
+1. For a crop reader, add its name to `CROP_TOOLS` in `recognizers/__init__.py`. If it can run in
+   this environment, add a branch to `run_crop_tool`; otherwise write `recognizers/<tool>_worker.py`
+   following the contract in `subprocess_reader.py`. For a whole-document tool, write
+   `recognizers/<tool>_runner.py` and add a branch in the `recognize` step of `run_pipeline.py`.
+   Every runner returns exactly the columns in `PREDICTION_COLUMNS`. Catch errors per item and record
+   them in the `error` column, so one bad crop never stops a run.
 2. Add a block for the tool under `recognizers:` in `configs/default.yaml` with `enabled: true` and
    its settings (weights repository, device and so on).
-3. Add a branch for the tool in the `recognize` step of `run_pipeline.py`.
-4. Add its dependencies to `requirements.txt`, or run it in its own environment as a subprocess
-   (like the BioMiner wrapper) if they clash with MolScribe's pins.
+3. Add its dependencies to `requirements.txt`, or give it its own environment if they clash with
+   MolScribe's pins.
 
 Scoring and reporting pick up every tool that has a predictions file, so the new tool gets its own
 column in `comparison.csv` and its own bars in the figures with no further changes.

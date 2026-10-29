@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from molcensus import data, detect, render, report, weights  # noqa: E402
 from molcensus.config import load_config  # noqa: E402
+from molcensus.recognizers import CROP_TOOLS, run_crop_tool  # noqa: E402
 
 STEPS = ["prepare", "render", "detect", "recognize", "score", "public", "report"]
 log = logging.getLogger("pipeline")
@@ -118,14 +119,8 @@ def main() -> None:
     if "recognize" in steps:
         for tool in enabled_tools(config):
             settings = config["recognizers"][tool]
-            if tool == "molscribe":
-                from molcensus.recognizers.molscribe_runner import run_molscribe
-
-                checkpoint = weights.fetch_weights(
-                    settings["hf_repo"], settings["checkpoint_file"], paths["models_dir"],
-                    settings.get("local_checkpoint", ""),
-                )
-                outputs = {tool: run_molscribe(pd.read_csv(crops_index), checkpoint, settings["device"])}
+            if tool in CROP_TOOLS:
+                outputs = {tool: run_crop_tool(tool, pd.read_csv(crops_index), settings, paths["models_dir"])}
             elif tool == "biominer":
                 from molcensus.recognizers.biominer_runner import run_biominer
 

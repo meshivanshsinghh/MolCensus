@@ -168,7 +168,7 @@ def summarize(scored: pd.DataFrame, published_exact: dict) -> pd.DataFrame:
 def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFrame | None:
     """Download (once), sample, run every crop-capable enabled recognizer, score, and save the results."""
     from .chem import Featurizer
-    from . import weights
+    from .recognizers import CROP_TOOLS, run_crop_tool
 
     settings = config["public_check"]
     root = fetch_archive(settings["hf_repo"], settings["archive"], config["paths"]["public_data_dir"])
@@ -186,19 +186,16 @@ def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFr
     featurizer = Featurizer(scoring["fingerprint_radius"], scoring["fingerprint_bits"])
     summaries = []
 
-    molscribe = config["recognizers"].get("molscribe", {})
-    if molscribe.get("enabled"):
-        from .recognizers.molscribe_runner import run_molscribe
-
-        checkpoint = weights.fetch_weights(
-            molscribe["hf_repo"], molscribe["checkpoint_file"], models_dir, molscribe.get("local_checkpoint", "")
-        )
-        predictions = run_molscribe(crops, checkpoint, molscribe["device"])
-        predictions.to_csv(out_dir / "molscribe_predictions.csv", index=False)
+    for tool in CROP_TOOLS:
+        tool_settings = config["recognizers"].get(tool, {})
+        if not tool_settings.get("enabled"):
+            continue
+        predictions = run_crop_tool(tool, crops, tool_settings, models_dir)
+        predictions.to_csv(out_dir / f"{tool}_predictions.csv", index=False)
         scored = score_items(predictions, items, featurizer)
         scored["image_path"] = scored["image_path"].map(lambda path: os.path.relpath(path, config["repo_root"]))
-        scored.to_csv(out_dir / "molscribe_scored.csv", index=False)
-        summaries.append(summarize(scored, settings.get("published_exact", {})))
+        scored.to_csv(out_dir / f"{tool}_scored.csv", index=False)
+        summaries.append(summarize(scored, settings.get("published_exact", {}).get(tool, {})))
 
     # BioMiner reads whole PDFs, not single-molecule images, so it has no crop-level run.
     if not summaries:

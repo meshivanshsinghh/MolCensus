@@ -38,6 +38,26 @@ recognizers:
     checkpoint_file: swin_base_char_aux_1m680k.pth
     local_checkpoint: ""
     device: cpu
+  molsight:
+    # Runs in its own environment (its pins clash with MolScribe's). Setup: docs/usage.md,
+    # "Readers in their own environment".
+    enabled: false
+    repo_dir: tools/MolSight                       # clone of https://github.com/hustvl/MolSight at 86e979b
+    python_executable: tools/molsight-env/bin/python
+    hf_repo: Robert-zwr/MolSight
+    checkpoint_file: pubchem_uspto_smiles_edges_10.pth   # MolSight-base, 0.79 GB
+    local_checkpoint: ""
+    device: cpu
+  molglyph:
+    # BioMiner's reader, run on our crops inside BioMiner's environment. Its weights are gated:
+    # accept the terms at huggingface.co/jiaxianustc/MolGlyph, then `hf auth login`.
+    enabled: false
+    repo_dir: ${BIOMINER_DIR}
+    python_executable: ${BIOMINER_PYTHON}
+    hf_repo: jiaxianustc/MolGlyph
+    checkpoint_file: molglyph_large.pt              # 1.67 GB
+    local_checkpoint: ""
+    device: cpu
   biominer:
     # End-to-end BioMiner (MinerU + MolDetV2 + MolGlyph + MLLM). Needs one 24 GB GPU in API
     # mode and its three model servers running. Disabled until class HPC access is ready.
@@ -56,9 +76,12 @@ public_check:
   datasets: [uspto, acs]    # USPTO = patent drawings; ACS = journal figures, the closest match to the course papers
   sample_size: 300          # images per dataset, as a fixed random sample (0 = all); keeps the CPU run short
   seed: 0
-  published_exact:          # MolScribe exact-match accuracy reported by Qian et al. (2023)
-    uspto: 0.926
-    acs: 0.719
+  published_exact:          # exact-match accuracy reported by each tool's authors, per dataset
+    molscribe:              # Qian et al. (2023), Table 2
+      uspto: 0.926
+      acs: 0.719
+    molsight:               # MolSight README, MolSight-base checkpoint
+      uspto: 0.912
 
 scoring:
   fingerprint_radius: 2     # Morgan fingerprint settings for Tanimoto similarity
