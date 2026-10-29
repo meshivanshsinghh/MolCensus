@@ -7,9 +7,9 @@
 #
 # Needs ~/molcensus_keys.env, copied up from the Mac (never committed):
 #   HF_TOKEN=...              Hugging Face read token; accept MolGlyph's terms on its model page first
-#   GEMINI_MODEL=...          Gemini model name for BioMiner's text and vision calls
 #   GEMINI_API_KEY_FREE=...   public papers only
-#   GEMINI_API_KEY_PAID=...   course papers; leave out until permission is given
+#   GEMINI_API_KEY_PAID=...   course papers; leave empty until permission is given
+# The Gemini model (gemini-3.5-flash) is set in biominer_gemini.py, not here.
 set -uo pipefail
 exec > >(tee -a "$HOME/setup.log") 2>&1
 echo "=== setup.sh started $(date -u +%FT%TZ)"

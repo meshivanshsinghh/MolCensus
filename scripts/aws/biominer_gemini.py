@@ -3,9 +3,11 @@
 Runs on the GPU instance with the BioMiner environment's Python (it needs PyYAML, Pillow and openai,
 which that environment has). It reads a keys file that never enters git:
 
-    GEMINI_MODEL=...           model name for both text and vision calls
     GEMINI_API_KEY_FREE=...    free tier: public papers only (BioMiner's examples, BioVista)
     GEMINI_API_KEY_PAID=...    paid tier: the six course papers, only once permission is given
+
+Every BioMiner run uses MODEL (below) for both text and vision calls. The wrapper copies the name
+from the config into each paper's run_info.json.
 
 and writes two configs inside the BioMiner clone, next to its default one:
 
@@ -18,7 +20,9 @@ gemini-series-prompt folder for any model name without "gpt" in it.
 
 With --check, it sends one request per key shaped exactly like BioMiner's image call (system message,
 base64 PNG with detail "high", one of BioMiner's Gemini prompts, temperature 0, response_format
-json_object, max_tokens 4096) and prints whether the answer is valid JSON. Run it before any paper.
+json_object, max_tokens 4096, and the client settings of patch_biominer.py) and prints whether the
+answer is valid JSON. Run it before any paper. It sends one request, without retries, so a 503 here
+only means the model was busy at that moment.
 
 Usage:
     python scripts/aws/biominer_gemini.py --keys ~/molcensus_keys.env --biominer ~/BioMiner --check
@@ -37,6 +41,9 @@ from pathlib import Path
 import yaml
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# On 2026-10-29 the owner's test got 503 "high demand" twice from gemini-3.8-flash; gemini-3.5-flash
+# answered an image call with response_format json_object correctly (after one 503).
+MODEL = "gemini-3.5-flash"
 DEFAULT_CONFIG = "BioMiner/config/default_open_source.yaml"
 CHECK_PROMPT = "BioMiner/commons/prompts/gemini-series-prompt/prompt_for_structure_full_updated_v3_with_index.txt"
 TIERS = {"free": 1, "paid": 2}  # tier -> n_jobs (papers, and so MLLM requests, at a time)
@@ -63,13 +70,13 @@ def write_configs(keys: dict[str, str], biominer: Path) -> list[Path]:
         config["grounding_gpu_num"] = 1  # one GPU: one request at a time to each model server
         config["n_jobs"] = n_jobs
         config["model"].update(
-            base_url=BASE_URL, api_key=api_key, text_mllm_type=keys["GEMINI_MODEL"], vision_mllm_type=keys["GEMINI_MODEL"]
+            base_url=BASE_URL, api_key=api_key, text_mllm_type=MODEL, vision_mllm_type=MODEL
         )
         path = biominer / f"BioMiner/config/molcensus_{tier}.yaml"
         path.write_text(yaml.safe_dump(config, sort_keys=False))
         path.chmod(0o600)  # holds an API key
         written.append(path)
-        print(f"{tier}: wrote {path} (model {keys['GEMINI_MODEL']}, n_jobs {n_jobs})")
+        print(f"{tier}: wrote {path} (model {MODEL}, n_jobs {n_jobs})")
     return written
 
 
@@ -83,7 +90,7 @@ def check(config_path: Path, prompt_path: Path) -> bool:
     image = base64.b64encode(buffer.getvalue()).decode("utf-8")
     prompt = prompt_path.read_text().strip().replace("<index></index>", "[]")
 
-    client = OpenAI(base_url=model["base_url"], api_key=model["api_key"])
+    client = OpenAI(base_url=model["base_url"], api_key=model["api_key"], timeout=300, max_retries=0)  # as patched BioMiner
     try:
         response = client.chat.completions.create(
             messages=[
@@ -118,8 +125,6 @@ def main() -> None:
     args = parser.parse_args()
 
     keys = read_keys(args.keys)
-    if not keys.get("GEMINI_MODEL"):
-        raise SystemExit(f"Set GEMINI_MODEL in {args.keys}")
     written = write_configs(keys, args.biominer)
     if args.check and not all([check(path, args.biominer / CHECK_PROMPT) for path in written]):
         sys.exit(1)

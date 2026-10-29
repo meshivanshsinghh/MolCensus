@@ -21,20 +21,17 @@ placeholder (`placeholder_ground_truth.csv`).
 2. Hugging Face: accept the terms at https://huggingface.co/jiaxianustc/MolGlyph (it is gated; the
    dry run here got 401 without that) and create a read token.
 3. Gemini: a free-tier key (public papers) and, only once the course allows sending its PDFs to
-   Google, a paid key. Pick a model your free tier allows; Google's OpenAI-compatibility docs use
-   `gemini-3.8-flash` in their examples.
-4. The keys file, outside the repo:
+   Google, a paid key. Every BioMiner run uses `gemini-3.5-flash` (set in `biominer_gemini.py`):
+   in a test on 2026-10-29, `gemini-3.8-flash` returned 503 "high demand" twice, while
+   `gemini-3.5-flash` read an image with `response_format: json_object` correctly after one 503.
+4. The keys file, outside the repo: `~/.molcensus/molcensus_keys.env` (folder mode 700, file mode
+   600). It starts as a template with these names and empty values; fill them in with an editor:
 
-   ```bash
-   mkdir -p ~/.molcensus && chmod 700 ~/.molcensus
-   cat > ~/.molcensus/molcensus_keys.env <<'EOF'
-   HF_TOKEN=hf_...
-   GEMINI_MODEL=gemini-3.8-flash
-   GEMINI_API_KEY_FREE=...
-   # GEMINI_API_KEY_PAID=...   only after permission
-   EOF
-   chmod 600 ~/.molcensus/molcensus_keys.env
-   ```
+   | Name | What |
+   |---|---|
+   | `HF_TOKEN` | Hugging Face read token (MolGlyph's terms accepted first) |
+   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: public papers only |
+   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: course papers; leave empty until permitted |
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
