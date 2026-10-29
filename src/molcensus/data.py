@@ -40,10 +40,15 @@ def load_ground_truth(csv_path: Path, papers: list[int]) -> pd.DataFrame:
 
 
 def find_pdfs(pdf_dir: Path, papers: list[int]) -> dict[int, Path]:
-    """Map each paper ID to its PDF (expected name: <paper_id>.pdf)."""
+    """Map each paper ID to its PDF: <paper_id>.pdf, or <paper_id>_<anything>.pdf (BioVista: 68_6r8r.pdf)."""
     pdfs = {}
     for paper_id in papers:
         pdf_path = pdf_dir / f"{paper_id}.pdf"
+        if not pdf_path.exists():
+            matches = sorted(pdf_dir.glob(f"{paper_id}_*.pdf"))
+            if len(matches) > 1:
+                raise FileNotFoundError(f"More than one PDF for paper {paper_id} in {pdf_dir}: {[m.name for m in matches]}")
+            pdf_path = matches[0] if matches else pdf_path
         if not pdf_path.exists():
             raise FileNotFoundError(f"Missing {pdf_path}. Put the course PDFs in {pdf_dir} (see data/README.md).")
         pdfs[paper_id] = pdf_path

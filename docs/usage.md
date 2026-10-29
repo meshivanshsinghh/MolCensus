@@ -114,9 +114,23 @@ column in `comparison.csv` and its own bars in the figures with no further chang
 ## Add a dataset
 
 The paper-level loader in `data.py` expects a CSV with `paperID`, `name of molecule` and
-`canonical_SMILES` columns, and PDFs named `<paperID>.pdf`. Any set of papers with that layout runs
-as is: point `paths` in a new config at it. For more public single-molecule sets, add `clef`, `uob`
-or `staker` to `public_check.datasets`; they are already in the downloaded archive.
+`canonical_SMILES` columns, and PDFs named `<paperID>.pdf` or `<paperID>_<anything>.pdf`. Any set of
+papers with that layout runs as is: point `paths` in a new config at it.
+
+`src/molcensus/convert.py` turns other label formats into that CSV:
+
+```bash
+PYTHONPATH=src python -m molcensus.convert biovista <folder of *_structure.csv> data/biovista/ground_truth.csv
+```
+
+BioVista papers keep BioVista's names, `<index>_<pdb id>.pdf` (for example `68_6r8r.pdf`), because
+BioMiner's evaluator reads the PDB ID from the file name; the index becomes `paperID`. The BioVista
+structure labels sit in the "Bioactivity Triplet Extraction" download of BioMiner's
+`BioVista/README.md`. On 2026-10-29 that Google Drive link returned 404, so the converter was tested on
+files built from the format BioMiner's evaluator reads, not on the real labels.
+
+For more public single-molecule sets, add `clef`, `uob` or `staker` (already in the downloaded
+archive) or `biovista` (downloaded on first use) to `public_check.datasets`.
 
 ## Publish to Weights & Biases (optional)
 

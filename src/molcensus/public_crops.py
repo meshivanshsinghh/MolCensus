@@ -7,6 +7,11 @@ from MolScribe's evaluation archive (`real.zip`, 184 MB, in the MIT-licensed Hug
 
 Unlike the course papers, every image here shows exactly one molecule with one known answer, so
 scoring is per image: is the predicted molecule the same as the reference molecule?
+
+The BioVista OCSR set (8,861 crops from 335 papers, Yan et al., 2026) is a separate 61 MB download
+from the Google Drive link in BioMiner's BioVista README. Its authors report accuracy on all images and
+split into full structures, chiral ones and Markush ones (with * atoms), and they match SMILES with
+their own rule (chem.biominer_smiles_match), so BioVista rows are checked against that rule.
 """
 
 from __future__ import annotations
@@ -14,11 +19,14 @@ from __future__ import annotations
 import logging
 import math
 import os
+import tarfile
+import urllib.request
 import zipfile
 from pathlib import Path
 
 import pandas as pd
 
+from .chem import biominer_smiles_match
 from .metrics import featurize_column, wilson_interval
 
 log = logging.getLogger(__name__)
@@ -26,6 +34,10 @@ log = logging.getLogger(__name__)
 IMAGE_COLUMNS = ("file_path", "image_path", "path", "image", "filename")
 SMILES_COLUMNS = ("SMILES", "smiles", "canonical_smiles")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".gif", ".bmp"}
+
+BIOVISTA_OCSR_URL = "https://drive.usercontent.google.com/download?id=11iCH0j7U9iFgwXahjkWZouNyqATfEPoL&export=download&confirm=t"
+# Datasets whose published accuracies used BioMiner's matching rule instead of an exact InChIKey match.
+BIOMINER_RULE_DATASETS = {"biovista"}
 
 
 def fetch_archive(hf_repo: str, archive: str, dest_dir: Path) -> Path:
@@ -43,6 +55,33 @@ def fetch_archive(hf_repo: str, archive: str, dest_dir: Path) -> Path:
         bundle.extractall(dest_dir)
     marker.write_text(archive)
     return dest_dir
+
+
+def fetch_biovista_ocsr(dest_dir: Path) -> Path:
+    """Download and unpack BioVista's OCSR set once (ocsr/data/*.png, ocsr/labels/gd_SMIELS.csv)."""
+    root = dest_dir / "ocsr"
+    if (root / "labels" / "gd_SMIELS.csv").exists():
+        return root
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    archive = dest_dir / "ocsr.tar.gz"
+    log.info("Downloading the BioVista OCSR set (61 MB, one time)")
+    urllib.request.urlretrieve(BIOVISTA_OCSR_URL, archive)
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(dest_dir, filter="data")  # refuses absolute paths and ".." in the archive
+    return root
+
+
+def load_biovista(root: Path, sample_size: int, seed: int) -> pd.DataFrame:
+    """BioVista OCSR labels. Row (pdf_name, index, molminer_id "P<page>-<n>") shows image
+    data/<pdf_name>_image_molminer_bbox_<page>-<index>.png; rows are matched by name, not by order."""
+    table = pd.read_csv(root / "labels" / "gd_SMIELS.csv", index_col=0)
+    page = table["molminer_id"].str.extract(r"^P(\d+)-", expand=False)
+    image_ids = (table["pdf_name"] + "_" + page + "-" + table["index"].astype(str)).reset_index(drop=True)
+    image_paths = pd.Series([
+        str(root / "data" / f"{pdf}_image_molminer_bbox_{pg}-{idx}.png")
+        for pdf, pg, idx in zip(table["pdf_name"], page, table["index"])
+    ])
+    return _select_items("biovista", image_ids, image_paths, table["smiles"].reset_index(drop=True), sample_size, seed, "gd_SMIELS.csv")
 
 
 def find_dataset_csv(root: Path, name: str) -> Path:
@@ -89,13 +128,20 @@ def load_dataset(csv_path: Path, name: str, root: Path, sample_size: int, seed: 
         by_stem = {p.stem: p for p in root.rglob("*") if p.suffix.lower() in IMAGE_SUFFIXES}
         image_paths = image_ids.map(lambda i: str(by_stem[i]) if i in by_stem else "")
 
+    return _select_items(name, image_ids, image_paths, table[smiles_column], sample_size, seed, csv_path.name)
+
+
+def _select_items(
+    name: str, image_ids: pd.Series, image_paths: pd.Series, smiles: pd.Series, sample_size: int, seed: int, source: str
+) -> pd.DataFrame:
+    """Keep the images that exist, then take a fixed random sample of them (0 = all)."""
     items = pd.DataFrame(
         {
             "dataset": name,
             "image_id": image_ids.values,
             "crop_id": [f"{name}_{i}" for i in image_ids.values],
             "image_path": image_paths.values,
-            "gt_smiles": table[smiles_column].astype(str).str.strip().values,
+            "gt_smiles": smiles.astype(str).str.strip().values,
         }
     )
     found = items["image_path"].map(lambda p: bool(p) and Path(p).exists())
@@ -105,7 +151,7 @@ def load_dataset(csv_path: Path, name: str, root: Path, sample_size: int, seed: 
 
     if sample_size and len(items) > sample_size:
         items = items.sample(n=sample_size, random_state=seed).sort_values("crop_id").reset_index(drop=True)
-    log.info("%s: %d images selected from %s", name, len(items), csv_path.name)
+    log.info("%s: %d images selected from %s", name, len(items), source)
     return items
 
 
@@ -125,13 +171,26 @@ def score_items(predictions: pd.DataFrame, items: pd.DataFrame, featurizer) -> p
         for pred_fp, gt_fp, ok in zip(merged["fingerprint"], merged["gt_fingerprint"], both_valid)
     ]
     merged["chiral"] = merged["gt_smiles"].str.contains("@", regex=False)
+    merged["biominer_rule_match"] = [biominer_smiles_match(p, g) for p, g in zip(merged["pred_smiles"], merged["gt_smiles"])]
     return merged.drop(columns=["fingerprint", "gt_fingerprint"])
+
+
+def _summary_groups(scored: pd.DataFrame):
+    """(tool, dataset, rows). BioVista also gets the full / chiral / Markush splits its authors report,
+    defined as in BioMiner's evaluator: Markush = reference has a * atom, chiral = it has an @."""
+    for (tool, dataset), group in scored.groupby(["tool", "dataset"]):
+        yield tool, dataset, group
+        if dataset in BIOMINER_RULE_DATASETS:
+            markush = group["gt_smiles"].str.contains("*", regex=False)
+            yield tool, f"{dataset}_full", group[~markush]
+            yield tool, f"{dataset}_chiral", group[group["chiral"]]
+            yield tool, f"{dataset}_markush", group[markush]
 
 
 def summarize(scored: pd.DataFrame, published_exact: dict) -> pd.DataFrame:
     """One row of metrics per (tool, dataset), with 95% Wilson intervals on the accuracies."""
     rows = []
-    for (tool, dataset), group in scored.groupby(["tool", "dataset"]):
+    for tool, dataset, group in _summary_groups(scored):
         reference = group[group["gt_valid"]]  # images whose reference SMILES RDKit can read
         n = len(reference)
         exact = int(reference["exact_match"].sum())
@@ -139,6 +198,12 @@ def summarize(scored: pd.DataFrame, published_exact: dict) -> pd.DataFrame:
         chiral = reference[reference["chiral"]]
         exact_low, exact_high = wilson_interval(exact, n)
         blind_low, blind_high = wilson_interval(blind, n)
+        # BioMiner's evaluator keeps every reference except empty ones and a bare "C", so its denominator differs.
+        biominer_rows = group[~group["gt_smiles"].str.lower().isin(["nan", "", "c"])]
+        biominer_hits = int(biominer_rows["biominer_rule_match"].sum())
+        biominer_low, biominer_high = wilson_interval(biominer_hits, len(biominer_rows))
+        rule = "biominer" if dataset.split("_")[0] in BIOMINER_RULE_DATASETS else "exact"
+        check_low, check_high = (biominer_low, biominer_high) if rule == "biominer" else (exact_low, exact_high)
         published = published_exact.get(dataset)
         rows.append(
             {
@@ -158,8 +223,13 @@ def summarize(scored: pd.DataFrame, published_exact: dict) -> pd.DataFrame:
                 "mean_tanimoto": float(reference["tanimoto"].mean()) if n else 0.0,
                 "mean_confidence": float(group["confidence"].mean()) if group["confidence"].notna().any() else math.nan,
                 "mean_runtime_s": float(group["runtime_s"].mean()) if group["runtime_s"].notna().any() else math.nan,
+                "n_biominer_rule": len(biominer_rows),
+                "biominer_rule_accuracy": biominer_hits / len(biominer_rows) if len(biominer_rows) else 0.0,
+                "biominer_rule_ci_low": biominer_low,
+                "biominer_rule_ci_high": biominer_high,
                 "published_exact": published if published is not None else math.nan,
-                "published_within_ci": (exact_low <= published <= exact_high) if published is not None else None,
+                "published_rule": rule,
+                "published_within_ci": (check_low <= published <= check_high) if published is not None else None,
             }
         )
     return pd.DataFrame(rows)
@@ -171,14 +241,16 @@ def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFr
     from .recognizers import CROP_TOOLS, run_crop_tool
 
     settings = config["public_check"]
-    root = fetch_archive(settings["hf_repo"], settings["archive"], config["paths"]["public_data_dir"])
-    items = pd.concat(
-        [
-            load_dataset(find_dataset_csv(root, name), name, root, int(settings.get("sample_size", 0)), int(settings.get("seed", 0)))
-            for name in settings["datasets"]
-        ],
-        ignore_index=True,
-    )
+    sample_size, seed = int(settings.get("sample_size", 0)), int(settings.get("seed", 0))
+    public_dir = config["paths"]["public_data_dir"]
+    frames = []
+    for name in settings["datasets"]:
+        if name == "biovista":
+            frames.append(load_biovista(fetch_biovista_ocsr(public_dir / "biovista"), sample_size, seed))
+        else:
+            root = fetch_archive(settings["hf_repo"], settings["archive"], public_dir)
+            frames.append(load_dataset(find_dataset_csv(root, name), name, root, sample_size, seed))
+    items = pd.concat(frames, ignore_index=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     crops = items.assign(paper_id=items["dataset"], page=None)
 
@@ -205,9 +277,11 @@ def run_public_check(config: dict, models_dir: Path, out_dir: Path) -> pd.DataFr
     metrics = pd.concat(summaries, ignore_index=True)
     metrics.to_csv(out_dir / "public_metrics.csv", index=False)
     for row in metrics.itertuples(index=False):
+        rule = "biominer_rule" if row.published_rule == "biominer" else "exact"
         log.info(
-            "%s on %s: exact %.3f [%.3f, %.3f] (published %s) over %d images",
-            row.tool, row.dataset, row.exact_accuracy, row.exact_ci_low, row.exact_ci_high,
+            "%s on %s: exact %.3f; %s %.3f [%.3f, %.3f] (published %s) over %d images",
+            row.tool, row.dataset, row.exact_accuracy, rule, getattr(row, f"{rule}_accuracy"),
+            getattr(row, f"{rule}_ci_low"), getattr(row, f"{rule}_ci_high"),
             "n/a" if math.isnan(row.published_exact) else f"{row.published_exact:.3f}", row.n_scored,
         )
     return metrics

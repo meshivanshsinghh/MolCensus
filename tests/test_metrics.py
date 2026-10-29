@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from molcensus.config import load_config  # noqa: E402
 from molcensus.metrics import outcome_counts, paper_bootstrap, score_tool, set_match, wilson_interval  # noqa: E402
-from molcensus.public_crops import find_dataset_csv, load_dataset, score_items, summarize  # noqa: E402
+from molcensus.public_crops import find_dataset_csv, load_biovista, load_dataset, score_items, summarize  # noqa: E402
 
 
 def test_set_match_counts_unique_keys():
@@ -181,3 +181,36 @@ def test_public_scoring_counts_exact_stereo_and_published_check(tmp_path):
     assert row["stereo_blind_accuracy"] == pytest.approx(4 / 6)
     assert row["validity_rate"] == pytest.approx(4 / 6)
     assert bool(row["published_within_ci"]) is True
+
+
+def test_biovista_loader_splits_and_biominer_rule(tmp_path):
+    pytest.importorskip("rdkit")
+    from molcensus.chem import Featurizer
+
+    # Label rows are matched to images by name; papers are not in sorted order in the real file either.
+    (tmp_path / "labels").mkdir()
+    (tmp_path / "data").mkdir()
+    labels = pd.DataFrame({"pdf_name": ["51_6rrm", "51_6rrm", "2_6v1c"], "index": [0, 1, 0],
+                           "molminer_id": ["P3-1", "P3-2", "P1-1"],
+                           "smiles": ["[1*]c1ccccc1", "C[C@H](N)O", "CC(=O)O"]})
+    labels.to_csv(tmp_path / "labels" / "gd_SMIELS.csv")
+    for pdf, page, index in [("51_6rrm", 3, 0), ("51_6rrm", 3, 1), ("2_6v1c", 1, 0)]:
+        (tmp_path / "data" / f"{pdf}_image_molminer_bbox_{page}-{index}.png").write_bytes(b"png")
+
+    items = load_biovista(tmp_path, sample_size=0, seed=0)
+    assert items.set_index("image_id").loc["51_6rrm_3-1", "image_path"].endswith("51_6rrm_image_molminer_bbox_3-1.png")
+
+    # Markush read as a plain *, stereo lost, acid read as its anion.
+    answers = {"[1*]c1ccccc1": "*c1ccccc1", "C[C@H](N)O": "CC(N)O", "CC(=O)O": "CC(=O)[O-]"}
+    preds = pd.DataFrame([{"tool": "fake", "crop_id": r.crop_id, "pred_smiles": answers[r.gt_smiles],
+                           "confidence": None, "runtime_s": 0.1, "error": ""} for r in items.itertuples()])
+    metrics = summarize(score_items(preds, items, Featurizer()), {"biovista": 0.5}).set_index("dataset")
+
+    assert list(metrics.index) == ["biovista", "biovista_full", "biovista_chiral", "biovista_markush"]
+    assert metrics.loc["biovista", "exact_accuracy"] == 0.0                         # our rule: no exact match
+    assert metrics.loc["biovista", "biominer_rule_accuracy"] == pytest.approx(2 / 3)  # BioMiner's rule: two
+    assert metrics.loc["biovista_markush", "biominer_rule_accuracy"] == 1.0
+    assert metrics.loc["biovista_full", "biominer_rule_accuracy"] == 0.5
+    assert metrics.loc["biovista_chiral", "biominer_rule_accuracy"] == 0.0
+    assert (metrics["published_rule"] == "biominer").all()
+    assert bool(metrics.loc["biovista", "published_within_ci"]) is True

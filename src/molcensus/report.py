@@ -120,6 +120,10 @@ def public_table(public: pd.DataFrame) -> pd.DataFrame:
                 "tool / dataset": f"{row.tool} / {row.dataset.upper()}",
                 "images": int(row.n_scored),
                 "exact accuracy [95% CI]": f"{row.exact_accuracy:.3f} [{row.exact_ci_low:.3f}, {row.exact_ci_high:.3f}]",
+                "BioMiner-rule accuracy [95% CI]": (
+                    f"{row.biominer_rule_accuracy:.3f} [{row.biominer_rule_ci_low:.3f}, {row.biominer_rule_ci_high:.3f}]"
+                    if getattr(row, "published_rule", "exact") == "biominer" else ""
+                ),
                 "published": _fmt(row.published_exact),
                 "published inside CI": {True: "yes", False: "no"}.get(row.published_within_ci, "n/a"),
                 "stereo-blind accuracy": _fmt(row.stereo_blind_accuracy),
@@ -129,7 +133,10 @@ def public_table(public: pd.DataFrame) -> pd.DataFrame:
                 "seconds / image": _fmt(row.mean_runtime_s),
             }
         )
-    return pd.DataFrame(rows).set_index("tool / dataset")
+    table = pd.DataFrame(rows).set_index("tool / dataset")
+    if not table["BioMiner-rule accuracy [95% CI]"].astype(bool).any():  # only BioVista rows use that rule
+        table = table.drop(columns="BioMiner-rule accuracy [95% CI]")
+    return table
 
 
 def git_state(repo_root: Path) -> dict:

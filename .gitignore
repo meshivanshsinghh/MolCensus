@@ -1,7 +1,7 @@
 # Inputs: course PDFs are copyrighted and the ground truth is private sponsor data (see data/README.md)
-data/pdfs/*.pdf
-data/*.csv
-data/public/
+# Everything under data/ stays local (course PDFs, ground truth, public downloads, BioVista, pilot sets).
+data/*
+!data/README.md
 
 # Large intermediate files and downloaded weights
 outputs/

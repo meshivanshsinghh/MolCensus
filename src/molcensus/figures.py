@@ -69,8 +69,11 @@ def overview_figure(
     rows = []  # label, value, low, high, color, published value
     if public is not None:
         for r in public.sort_values("dataset", ascending=False).itertuples():
+            # Plot the accuracy under the rule the published value used, so the marker compares like with like.
+            rule = "biominer_rule" if getattr(r, "published_rule", "exact") == "biominer" else "exact"
             rows.append((label(r.tool, f"{r.dataset.upper()} crops\n{r.n_scored} images"),
-                         r.exact_accuracy, r.exact_ci_low, r.exact_ci_high, BLUE, r.published_exact))
+                         getattr(r, f"{rule}_accuracy"), getattr(r, f"{rule}_ci_low"), getattr(r, f"{rule}_ci_high"),
+                         BLUE, r.published_exact))
     if per_paper is not None:
         for r in per_paper[per_paper["paper_id"] == "ALL"].itertuples():
             rows.append((label(r.tool, f"Whole papers\n{int(r.n_gt_unique)} molecules"),

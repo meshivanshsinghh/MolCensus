@@ -62,6 +62,23 @@ answer, so accuracy is per image: exact match, stereo-blind match, chiral accura
 Tanimoto, confidence and seconds per image. The check passes when the published accuracy (92.6% on
 USPTO and 71.9% on ACS; Qian et al., 2023) falls inside our 95% Wilson interval.
 
+**BioVista OCSR** (Yan et al., 2026) adds 8,861 crops from 335 papers: 4,844 full structures, 4,017
+Markush structures (the reference has `*` atoms) and 2,230 chiral ones (the reference has `@`). It is
+a separate 61 MB download from the Google Drive link in BioMiner's `BioVista/README.md`. Its labels
+(`ocsr/labels/gd_SMIELS.csv`: `pdf_name`, `index`, `molminer_id`, `smiles`) are matched to the images
+`ocsr/data/<pdf_name>_image_molminer_bbox_<page>-<index>.png` by name. BioMiner's own evaluator pairs
+labels and predictions by row order instead, and the label file is not sorted by paper, so we do not
+copy that step. The published BioVista values (BioMiner README, commit `17c6161`) were computed with
+BioMiner's matching rule: neutralize charges, compare canonical SMILES, and treat the first `[1*]` as a
+plain `*`. MolCensus scores every image with both rules and checks BioVista's published values against
+BioMiner's rule; `exact_accuracy` stays our InChIKey rule. The summary has one row for all images and
+one each for the full, chiral and Markush splits.
+
+A sample of 300 BioVista images (seed 0) with MolScribe on the Mac CPU gave 0.457 under BioMiner's
+rule [0.401, 0.513] against the published 0.455, and 0.450 under our rule. The full, chiral and Markush
+splits also fell inside their intervals. This was a check of the setup, not a result; the full set
+runs on the GPU instance.
+
 Reference SMILES that RDKit cannot read are left out. In ACS that is 47 of the 300 labels, mostly
 placeholders such as `[R]`, `[Ar]` or `[X]`; in USPTO it is 5 malformed labels. That leaves 253 ACS
 and 295 USPTO images. The published numbers used the authors' own handling of these labels, so the

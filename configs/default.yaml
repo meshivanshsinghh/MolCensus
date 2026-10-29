@@ -74,14 +74,27 @@ public_check:
   hf_repo: yujieq/MolScribe
   archive: real.zip         # 184 MB: CLEF, UOB, USPTO, Staker and ACS images with SMILES (MIT-licensed repo)
   datasets: [uspto, acs]    # USPTO = patent drawings; ACS = journal figures, the closest match to the course papers
+                            # also available: clef, uob, staker (same archive) and biovista (separate 61 MB download)
   sample_size: 300          # images per dataset, as a fixed random sample (0 = all); keeps the CPU run short
   seed: 0
-  published_exact:          # exact-match accuracy reported by each tool's authors, per dataset
-    molscribe:              # Qian et al. (2023), Table 2
+  published_exact:          # accuracy reported by each tool's authors, per dataset
+    molscribe:              # Qian et al. (2023), Table 2; BioVista: BioMiner README at commit 17c6161
       uspto: 0.926
       acs: 0.719
+      clef: 0.889
+      uob: 0.879
+      staker: 0.869
+      biovista: 0.455
+      biovista_full: 0.703
+      biovista_chiral: 0.481
+      biovista_markush: 0.156
     molsight:               # MolSight README, MolSight-base checkpoint
       uspto: 0.912
+    molglyph:               # BioMiner README at commit 17c6161 (BioVista OCSR table)
+      biovista: 0.764
+      biovista_full: 0.758
+      biovista_chiral: 0.504
+      biovista_markush: 0.770
 
 scoring:
   fingerprint_radius: 2     # Morgan fingerprint settings for Tanimoto similarity

@@ -59,3 +59,33 @@ class Featurizer:
         if fingerprint is None or not others:
             return []
         return list(DataStructs.BulkTanimotoSimilarity(fingerprint, others))
+
+
+# BioMiner's BioVista OCSR rule (BioMiner/commons/process_mol.py, check_smiles_match, commit 17c6161):
+# neutralize charges, write canonical SMILES, and let the first [1*] count as a plain *. Used only to
+# compare with BioVista's published accuracies, which were computed this way.
+_CHARGED = Chem.MolFromSmarts("[+1!h0!$([*]~[-1,-2,-3,-4]),-1!$([*]~[+1,+2,+3,+4])]")
+
+
+def _biominer_form(smiles: str) -> str:
+    molecule = Chem.MolFromSmiles(smiles)
+    for (index,) in molecule.GetSubstructMatches(_CHARGED):
+        atom = molecule.GetAtomWithIdx(index)
+        charge, hydrogens = atom.GetFormalCharge(), atom.GetTotalNumHs()
+        atom.SetFormalCharge(0)
+        atom.SetNumExplicitHs(hydrogens - charge)
+        atom.UpdatePropertyCache()
+    molecule = Chem.MolFromSmiles(Chem.MolToSmiles(molecule))
+    for atom in molecule.GetAtoms():
+        if atom.GetSymbol() == "*" and atom.GetIsotope() == 1:
+            atom.SetIsotope(0)
+            break
+    return Chem.MolToSmiles(molecule)
+
+
+def biominer_smiles_match(predicted: Any, reference: Any) -> bool:
+    """True when two SMILES match under BioMiner's BioVista rule. Anything unreadable is a mismatch."""
+    try:
+        return _biominer_form(predicted) == _biominer_form(reference)
+    except Exception:
+        return False
