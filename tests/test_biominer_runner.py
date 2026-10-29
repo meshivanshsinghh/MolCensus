@@ -1,5 +1,6 @@
 """BioMiner wrapper against a fake BioMiner that writes the upstream file names. Run with: pytest -q"""
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ args = dict(a.lstrip("-").split("=", 1) for a in sys.argv[1:])
 name = pathlib.Path(args["pdf"]).name.split(".")[0]
 out = pathlib.Path(args["output_dir"]) / "extraction_gemini-2.5-flash" / name
 out.mkdir(parents=True)
+if name == "1":  # two failed MLLM calls, as BioMiner logs them
+    print("gemini-x 0 try failed: Error code: 429\ngemini-x 0 try failed: Error code: 429")
 s = "moldetv2_bbox_molglyph_ocsr__updated_v3_with_index_split4seg0.125_bg_lo"
 (out / f"{name}_structure_full_output_{s}.csv").write_text("ligand,smiles\n9z,CCCC\n")
 (out / f"{name}_structure_merged_output_{s}_{s}_clean_new.csv").write_text(",ligand,smiles\n0,x,CCCl\n")
@@ -35,6 +38,7 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     repo = tmp_path / "BioMiner"
     repo.mkdir()
     (repo / "example_open_source.py").write_text(FAKE_BIOMINER)
+    (repo / "c.yaml").write_text("model:\n  text_mllm_type: gemini-x\n  vision_mllm_type: gemini-x\n")
     pdfs = {}
     for paper in (1, 2, 3):
         pdfs[paper] = tmp_path / f"{paper}.pdf"
@@ -63,3 +67,9 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     paper3 = structure[structure["paper_id"] == 3]
     assert len(paper3) == 1 and paper3["error"].iloc[0] == "no readable output table"
     assert pairs(bioactivity, 3) == [("9a", "CCO")]
+
+    # Every paper records the model names and how many MLLM calls failed.
+    info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
+    assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x"
+    assert info["api_failures"] == 2 and info["n_predictions"] == {"biominer": 2, "biominer_bioactivity": 1}
+    assert json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())["api_failures"] == 0

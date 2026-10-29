@@ -106,10 +106,19 @@ One run is created in the `molcensus` project (`--wandb-project` and `--wandb-en
 
 1. Clone https://github.com/jiaxianyan/BioMiner and follow its installation steps (two conda
    environments, model weights).
-2. Put the MLLM API key in BioMiner's `BioMiner/config/default_open_source.yaml`.
+2. Give it an MLLM. MolCensus uses Gemini through Gemini's OpenAI-compatible endpoint.
+   `scripts/aws/biominer_gemini.py --keys <keys file> --biominer <clone> --check` writes
+   `BioMiner/config/molcensus_free.yaml` (free-tier key, public papers only, 1 paper at a time) and
+   `molcensus_paid.yaml` (paid key, course papers, 2 at a time) inside the clone, then sends one
+   test request per key shaped like BioMiner's own. The keys file and both configs stay outside
+   this repo. BioMiner picks its Gemini prompts for any model name without "gpt".
 3. Start its MinerU, MolDet and OCSR servers.
 4. Copy `.env.example` to `.env` and set `BIOMINER_DIR` and `BIOMINER_PYTHON`.
-5. Set `recognizers.biominer.enabled: true`.
+5. Set `recognizers.biominer.enabled: true` and `config_path: BioMiner/config/molcensus_paid.yaml`.
+
+Each paper's output folder gets `run_info.json` with the model names and the number of failed MLLM
+calls. BioMiner tries each call once and carries on with an empty answer, so check that number: a
+rate-limited run otherwise looks normal, just with fewer molecules.
 
 The wrapper calls `example_open_source.py --pdf <paper> --output_dir <dir>` for each paper and reads
 two tables from `<dir>/extraction_<model>/<name>/`:

@@ -44,7 +44,8 @@ recognizers:
     enabled: false
     repo_dir: ${BIOMINER_DIR}
     python_executable: ${BIOMINER_PYTHON}
-    config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM API key
+    config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM API key and model names
+                                                             # (scripts/aws/biominer_gemini.py writes molcensus_free/paid.yaml)
     timeout_s: 3600
 
 public_check:

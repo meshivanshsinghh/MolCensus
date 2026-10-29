@@ -18,6 +18,10 @@ The structure tables are written before BioMiner's final merge step, and that st
 (it raises ValueError when labels cannot be mapped to SMILES). The structure tables are then kept,
 and each kept row notes the failure in its error column.
 
+Each paper's output folder also gets run_info.json: the MLLM names from BioMiner's config, the
+error if any, and how many MLLM calls failed. BioMiner tries each call once and carries on with an
+empty answer, so a rate-limited run looks normal unless that count is checked.
+
 Requirements (from the BioMiner README): one 24 GB GPU in API mode, the MinerU,
 MolDet and OCSR servers started from the BioMiner repo, and an MLLM API key in
 BioMiner's own config file. This stage is disabled in configs/default.yaml until
@@ -26,6 +30,7 @@ GPU access is available.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -35,6 +40,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from ..config import expand
 from . import PREDICTION_COLUMNS
@@ -49,6 +55,16 @@ OUTPUT_TABLES = [
     (TOOL_NAME, "extraction_*/{name}/{name}_structure_merged_output_*.csv"),
     (BIOACTIVITY_TOOL_NAME, "extraction_*/{name}/{name}_merge_*.csv"),
 ]
+
+
+def _model_names(config_file: Path) -> dict:
+    """The MLLM names in BioMiner's config. They are logged and saved with every run."""
+    try:
+        model = yaml.safe_load(config_file.read_text()).get("model") or {}
+    except (OSError, yaml.YAMLError, AttributeError) as exc:
+        log.warning("BioMiner: cannot read model names from %s (%s)", config_file, exc)
+        model = {}
+    return {"text_model": model.get("text_mllm_type", "unknown"), "vision_model": model.get("vision_mllm_type", "unknown")}
 
 
 def _read_tables(paper_output: Path, pattern: str) -> list[pd.DataFrame]:
@@ -111,6 +127,8 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
     python_exe = expand(str(settings.get("python_executable", ""))) or "python"
 
     environment = {**os.environ, "PYTHONPATH": str(repo_dir)}
+    models = _model_names(repo_dir / settings["config_path"])
+    log.info("BioMiner models: text %s, vision %s (config %s)", models["text_model"], models["vision_model"], settings["config_path"])
     records = {tool: [] for tool, _ in OUTPUT_TABLES}
     for paper_id, pdf_path in pdfs.items():
         paper_output = output_root / str(paper_id)
@@ -124,13 +142,19 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
         ]
         log.info("BioMiner: paper %s", paper_id)
         started = time.perf_counter()
-        error = ""
+        error, api_failures = "", None
         try:
             completed = subprocess.run(
                 command, cwd=repo_dir, env=environment, capture_output=True, text=True,
                 timeout=int(settings.get("timeout_s", 3600)),
             )
-            (paper_output / "biominer_stdout.log").write_text(completed.stdout + "\n" + completed.stderr)
+            output = completed.stdout + "\n" + completed.stderr
+            (paper_output / "biominer_stdout.log").write_text(output)
+            # BioMiner tries each MLLM call once and uses an empty answer if it fails (for example on a
+            # rate limit), so failed calls lose content silently. Count them from its log line.
+            api_failures = output.count(" try failed:")
+            if api_failures:
+                log.warning("BioMiner: paper %s: %d MLLM calls failed; their content is missing", paper_id, api_failures)
             if completed.returncode != 0:
                 error = f"exit code {completed.returncode}; see biominer_stdout.log"
         except (subprocess.TimeoutExpired, OSError) as exc:  # one slow or broken paper must not stop the run
@@ -141,11 +165,20 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
 
         # Tables written before a failure are still used; a missing table becomes one error row.
         name = pdf_path.name.split(".")[0]
+        n_rows = {}
         for tool, pattern in OUTPUT_TABLES:
             tables = _read_tables(paper_output, pattern.format(name=name))
             if tables:
-                records[tool].extend(_to_predictions(tables, tool, paper_id, runtime, f"partial run: {error}" if error else ""))
+                rows = _to_predictions(tables, tool, paper_id, runtime, f"partial run: {error}" if error else "")
             else:
-                records[tool].append(_failure_row(tool, paper_id, runtime, error or "no readable output table"))
+                rows = [_failure_row(tool, paper_id, runtime, error or "no readable output table")]
+            records[tool].extend(rows)
+            n_rows[tool] = len(rows) if tables else 0
+
+        run_info = {
+            "paper_id": paper_id, **models, "config_path": str(settings["config_path"]), "error": error,
+            "api_failures": api_failures, "runtime_s": round(runtime, 1), "n_predictions": n_rows,
+        }
+        (paper_output / "run_info.json").write_text(json.dumps(run_info, indent=2))
 
     return {tool: pd.DataFrame(rows, columns=PREDICTION_COLUMNS) for tool, rows in records.items()}
