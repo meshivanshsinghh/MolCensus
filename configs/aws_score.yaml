@@ -1,0 +1,7 @@
+# On the Mac: score what the GPU instance produced (copied back into results/aws/) against the real
+# ground truth, and write results/aws/RESULTS.md.
+#   python run_pipeline.py --config configs/aws_score.yaml --steps score,report --tools molscribe,molsight,molglyph,biominer
+extends: aws.yaml
+
+paths:
+  ground_truth_csv: data/ground_truth_SMILES_confirmed_1_2_4_6_16_19.csv

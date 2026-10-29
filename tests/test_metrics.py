@@ -105,6 +105,8 @@ def test_config_can_extend_another(tmp_path):
     config = load_config(tmp_path / "child.yaml")
     assert config["detection"] == {"method": "embedded", "pad_px": 12}
     assert config["papers"] == [1, 2] and config["paths"]["results_dir"].name == "results"
+    (tmp_path / "grandchild.yaml").write_text("extends: child.yaml\ndetection:\n  pad_px: 4\n")
+    assert load_config(tmp_path / "grandchild.yaml")["detection"] == {"method": "embedded", "pad_px": 4}
 
 
 def test_rdkit_featurizer_matches_equivalent_smiles():

@@ -50,6 +50,14 @@ def _merge(base: dict, override: dict) -> dict:
     return merged
 
 
+def _read_yaml(path: Path) -> dict:
+    with open(path, encoding="utf-8") as handle:
+        config = yaml.safe_load(handle)
+    if "extends" in config:  # can chain: aws_score.yaml -> aws.yaml -> default.yaml
+        config = _merge(_read_yaml(path.parent / config.pop("extends")), config)
+    return config
+
+
 def load_config(config_file: str | Path) -> dict[str, Any]:
     """Load the YAML config. Every entry under `paths` becomes an absolute Path.
 
@@ -60,11 +68,7 @@ def load_config(config_file: str | Path) -> dict[str, Any]:
     if config_path is None or not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
 
-    with open(config_path, encoding="utf-8") as handle:
-        config = yaml.safe_load(handle)
-    if "extends" in config:
-        with open(config_path.parent / config.pop("extends"), encoding="utf-8") as handle:
-            config = _merge(yaml.safe_load(handle), config)
+    config = _read_yaml(config_path)
 
     config["paths"] = {name: resolve_path(value) for name, value in config.get("paths", {}).items()}
     config["papers"] = [int(paper) for paper in config.get("papers", [])]

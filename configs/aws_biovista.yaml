@@ -1,0 +1,13 @@
+# Stage c of scripts/aws/run_all.sh: BioMiner on BioVista papers, named <index>_<pdb id>.pdf as
+# BioMiner's evaluator expects, with the free Gemini key (public papers only).
+extends: aws.yaml
+
+paths:
+  pdf_dir: data/biovista/pdfs
+  work_dir: outputs/work_biovista
+  results_dir: results/aws_biovista
+
+recognizers:
+  biominer:
+    config_path: BioMiner/config/molcensus_free.yaml
+    extra_args: ${BIOMINER_EXTRA_ARGS}   # run_all.sh sets --biovista_evaluate when BioVista's labels are there

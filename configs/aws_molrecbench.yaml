@@ -1,0 +1,9 @@
+# Stage e of scripts/aws/run_all.sh: the crop readers on MolRecBench-Wild, once its converter has
+# written data/public/molrecbench_wild/molrecbench_wild.csv.
+extends: aws.yaml
+
+paths:
+  results_dir: results/aws_molrecbench
+
+public_check:
+  datasets: [molrecbench_wild]

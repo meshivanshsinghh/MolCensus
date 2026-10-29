@@ -1,0 +1,22 @@
+# Run on the GPU instance by scripts/aws/run_all.sh. Which tools run is chosen there with --tools.
+# The ground truth is a header-only placeholder, so the private file never leaves the Mac; the
+# instance only predicts. Score on the Mac with configs/aws_score.yaml.
+extends: default.yaml
+
+paths:
+  ground_truth_csv: scripts/aws/placeholder_ground_truth.csv
+  results_dir: results/aws          # kept apart from the committed Mac results
+
+recognizers:
+  molscribe:
+    device: cuda
+  molsight:
+    device: cuda
+  molglyph:
+    device: cuda
+  biominer:
+    config_path: BioMiner/config/molcensus_paid.yaml    # paid Gemini key: course papers
+
+public_check:
+  datasets: [uspto, uob, clef, acs, biovista]
+  sample_size: 0                    # every image
