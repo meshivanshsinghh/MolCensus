@@ -3,9 +3,15 @@ sudo shutdown -h +600  # hard stop after 10 hours whatever happens below (cancel
 # Every GPU stage, in order. Start it inside tmux after setup.sh (see scripts/aws/README.md):
 #   bash ~/molcensus/scripts/aws/run_all.sh 2>&1 | tee -a ~/runs/run_all.log
 #
+# Order: a. crop readers on the course crops; BioMiner servers and smoke test (free key);
+# d. BioMiner on the course papers (paid key); servers stopped; b. crop readers on the public sets;
+# c. BioMiner on BioVista papers (free key); servers stopped; e. MolRecBench-Wild.
+#
 # Each stage writes ~/runs/<stage>.log and, if it succeeds, ~/runs/<stage>.done. A done stage is
 # skipped on a rerun (delete its .done file to redo it). A stage whose data is missing is skipped. A
-# failed stage does not stop the next one. The time estimates assume one A10G or L4 GPU; they are
+# failed stage does not stop the next one. Time limits: smoke test 45 min, stage d 2 h, stage c 3 h.
+# At its limit a stage stops, keeps the papers it finished and writes no done-marker, so a rerun
+# continues with the unfinished papers. The time estimates assume one A10G or L4 GPU; they are
 # extrapolated from the Mac CPU timings, not measured on a GPU.
 set -u
 MOLCENSUS=$(cd "$(dirname "$0")/../.." && pwd)
@@ -15,10 +21,13 @@ PY=$MOLCENSUS/.venv/bin/python
 RUNS=$HOME/runs
 PERMISSION_FLAG=$HOME/COURSE_PDFS_PERMISSION_GIVEN  # who approved sending the course PDFs to Gemini; copied up from the Mac
 READERS=molscribe,molsight,molglyph
-SKIP=3  # exit code a stage returns when its data is missing
+SERVERS='scripts/(mineru|moldet|ocsr)_server.py'
+SKIP=3     # exit code a stage returns when its data is missing
+LIMIT=124  # exit code a stage returns when it reached its time limit (as GNU timeout does)
 mkdir -p "$RUNS"
 cd "$MOLCENSUS" || exit 1
 export NO_ALBUMENTATIONS_UPDATE=1
+export HF_HUB_DOWNLOAD_TIMEOUT=180  # stage b downloads the public sets from Hugging Face
 
 stage() {  # stage <name> <estimate> <function>
   local name=$1 estimate=$2 fn=$3 started=$SECONDS code
@@ -29,8 +38,19 @@ stage() {  # stage <name> <estimate> <function>
   case $code in
     0) touch "$RUNS/$name.done"; echo "[$name] done after $(( (SECONDS - started) / 60 )) min" ;;
     "$SKIP") echo "[$name] skipped: $(tail -1 "$RUNS/$name.log")" ;;
+    "$LIMIT") echo "[$name] stopped at its time limit after $(( (SECONDS - started) / 60 )) min; finished papers" \
+                   "are kept and no done-marker was written, so a rerun of run_all.sh continues it" ;;
     *) echo "[$name] FAILED (exit $code) after $(( (SECONDS - started) / 60 )) min; see $RUNS/$name.log" ;;
   esac
+}
+
+limited() {  # limited <duration> <command...>
+  # GNU timeout sends SIGTERM to the command's whole process group (run_pipeline.py and the BioMiner
+  # process under it), then SIGKILL 60 s later. run_pipeline.py saves the papers it finished on SIGTERM.
+  timeout --kill-after=60 "$@"
+  local code=$?
+  if [ "$code" = 124 ] || [ "$code" = 137 ]; then return "$LIMIT"; fi
+  return "$code"
 }
 
 server_up() {  # 200 from /health, or 404 if this litserve version has no /health route but is listening
@@ -43,7 +63,10 @@ start_servers() {  # BioMiner's MinerU (8002), MolDetV2 (8001) and MolGlyph OCSR
   local entry name port
   for entry in mineru:8002 moldet:8001 ocsr:8003; do
     name=${entry%:*}; port=${entry#*:}
-    server_up "$port" || (cd "$BIOMINER" && PYTHONPATH=./ nohup "$BIOMINER_PY" "scripts/${name}_server.py" > "$RUNS/server_$name.log" 2>&1 &)
+    # setsid: each server leads its own process group, so a stage's time limit never kills it by
+    # accident and stop_servers can stop it together with its worker processes.
+    server_up "$port" || (cd "$BIOMINER" && PYTHONPATH=./ setsid nohup "$BIOMINER_PY" "scripts/${name}_server.py" \
+      > "$RUNS/server_$name.log" 2>&1 < /dev/null &)
   done
   for entry in mineru:8002 moldet:8001 ocsr:8003; do
     name=${entry%:*}; port=${entry#*:}
@@ -53,7 +76,21 @@ start_servers() {  # BioMiner's MinerU (8002), MolDetV2 (8001) and MolGlyph OCSR
   done
 }
 
-stop_servers() { pkill -f 'scripts/(mineru|moldet|ocsr)_server.py'; sleep 5; }
+stop_servers() {  # stop the servers and their workers, then make sure nothing is left on the GPU
+  local pid apps
+  for pid in $(pgrep -f "$SERVERS"); do kill -TERM -- "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2> /dev/null; done
+  for _ in $(seq 30); do pgrep -f "$SERVERS" > /dev/null || break; sleep 2; done
+  for pid in $(pgrep -f "$SERVERS"); do kill -KILL -- "-$(ps -o pgid= -p "$pid" | tr -d ' ')" 2> /dev/null; done
+  sleep 5
+  # Between stages nothing else should be on the GPU, so anything still there is a leftover.
+  apps=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2> /dev/null | tr -d ' ')
+  if [ -n "$apps" ]; then
+    echo "GPU still held by: $(nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader | tr '\n' ';'); killing"
+    for pid in $apps; do kill -KILL "$pid" 2> /dev/null; done
+    sleep 5
+  fi
+  echo "BioMiner servers stopped; GPU memory in use: $(nvidia-smi --query-gpu=memory.used --format=csv,noheader 2> /dev/null)"
+}
 
 # a. Three crop readers on the 237 course crops copied from the Mac.
 course_readers() {
@@ -75,19 +112,39 @@ EOF
   for tool in ${READERS//,/ }; do [ -s "results/aws/predictions/${tool}_predictions.csv" ] || { echo "no $tool predictions"; return 1; }; done
 }
 
+# BioMiner servers, then a smoke test on BioMiner's own example (free key), limit 45 minutes.
+biominer_smoke() {
+  [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
+  start_servers || return 1
+  limited 45m bash -c "cd '$BIOMINER' && PYTHONPATH=./ '$BIOMINER_PY' example_open_source.py \
+    --config_path=BioMiner/config/molcensus_free.yaml --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
+    || { local code=$?; echo "smoke test did not finish (exit $code)"; return $code; }
+  find "$RUNS/biominer_smoke" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
+  echo "smoke test passed; MLLM calls lost after all retries: $(grep -c ' try failed:' "$RUNS/biominer_smoke.log")"
+}
+
+# d. BioMiner on the six course PDFs (paid key, gemini-3.5-flash), only with the permission file, limit 2 hours.
+biominer_course() {
+  [ -e "$RUNS/biominer_smoke.done" ] || { echo "the BioMiner smoke test has not passed"; return $SKIP; }
+  [ -f "$PERMISSION_FLAG" ] || { echo "no permission flag $PERMISSION_FLAG"; return $SKIP; }
+  ls data/pdfs/*.pdf > /dev/null 2>&1 || { echo "no course PDFs in data/pdfs"; return $SKIP; }
+  [ -f "$BIOMINER/BioMiner/config/molcensus_paid.yaml" ] || { echo "no molcensus_paid.yaml: no paid Gemini key"; return $SKIP; }
+  echo "Permission record ($PERMISSION_FLAG):"; cat "$PERMISSION_FLAG"; echo
+  start_servers || return 1
+  limited 2h "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools biominer || return $?
+  [ -s results/aws/predictions/biominer_predictions.csv ] || { echo "no course BioMiner predictions"; return 1; }
+}
+
 # b. Three crop readers on the full public sets, scored here (public data, safe to commit later).
 public_readers() {
   "$PY" run_pipeline.py --config configs/aws.yaml --steps public --tools "$READERS"
   [ -s results/aws/public/public_metrics.csv ] || { echo "no public_metrics.csv"; return 1; }
 }
 
-# c. BioMiner smoke test, then BioMiner on BioVista papers (free Gemini key).
+# c. BioMiner on BioVista papers (free key), limit 3 hours.
 biominer_biovista() {
+  [ -e "$RUNS/biominer_smoke.done" ] || { echo "the BioMiner smoke test has not passed"; return $SKIP; }
   [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
-  start_servers || return 1
-  (cd "$BIOMINER" && PYTHONPATH=./ "$BIOMINER_PY" example_open_source.py --config_path=BioMiner/config/molcensus_free.yaml \
-    --pdf=example/pdfs/68_6r8r.pdf --output_dir="$RUNS/biominer_smoke") || { echo "smoke test failed"; return 1; }
-  find "$RUNS/biominer_smoke" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
   mkdir -p data/biovista/pdfs
   cp -n "$BIOMINER"/example/pdfs/*.pdf data/biovista/pdfs/  # 40_6s8a and 68_6r8r, shipped with BioMiner
   local papers
@@ -107,19 +164,9 @@ biominer_biovista() {
   else
     echo "BioVista labels not in $BIOMINER/BioVista; running without --biovista_evaluate"
   fi
-  "$PY" run_pipeline.py --config configs/aws_biovista.yaml --steps recognize --tools biominer --papers $papers
-  [ -s results/aws_biovista/predictions/biominer_predictions.csv ] || { echo "no BioVista predictions"; return 1; }
-}
-
-# d. BioMiner on the six course PDFs (free Gemini key, gemini-3.5-flash), only with the permission flag file.
-biominer_course() {
-  [ -f "$PERMISSION_FLAG" ] || { echo "no permission flag $PERMISSION_FLAG"; return $SKIP; }
-  ls data/pdfs/*.pdf > /dev/null 2>&1 || { echo "no course PDFs in data/pdfs"; return $SKIP; }
-  [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
-  echo "Permission record ($PERMISSION_FLAG):"; cat "$PERMISSION_FLAG"; echo
   start_servers || return 1
-  "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools biominer
-  [ -s results/aws/predictions/biominer_predictions.csv ] || { echo "no course BioMiner predictions"; return 1; }
+  limited 3h "$PY" run_pipeline.py --config configs/aws_biovista.yaml --steps recognize --tools biominer --papers $papers || return $?
+  [ -s results/aws_biovista/predictions/biominer_predictions.csv ] || { echo "no BioVista predictions"; return 1; }
 }
 
 # e. MolRecBench-Wild, once its converter has written the public-check CSV.
@@ -131,18 +178,23 @@ molrecbench_wild() {
 
 n_biovista=$(( $(ls data/biovista/pdfs/*.pdf 2>/dev/null | grep -v -e '/40_6s8a.pdf' -e '/68_6r8r.pdf' | wc -l) + 2 ))
 echo "run_all.sh started $(date); instance stops at the latest 10 hours from now"
-echo "Plan (estimates, not measured on this GPU):"
-echo "  a. course_readers     237 crops x 3 readers                          about 10 min"
-echo "  b. public_readers     21,643 images (USPTO, UOB, CLEF, ACS, BioVista) x 3 readers, scored   1.5 to 3.5 h"
-echo "  c. biominer_biovista  servers, smoke test, $n_biovista BioVista papers at 3 to 10 min each   $(( 15 + 3 * n_biovista )) to $(( 25 + 10 * n_biovista )) min"
-echo "  d. biominer_course    6 papers at 3 to 10 min each, only with $PERMISSION_FLAG   20 to 60 min"
-echo "  e. molrecbench_wild   5,029 images x 3 readers, if converted             20 to 50 min"
+echo "Plan (estimates, not measured on this GPU; limits in brackets):"
+echo "  a. course_readers     237 crops x 3 readers                                         about 10 min"
+echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf (free key)  15 to 45 min [45 min]"
+echo "  d. biominer_course    6 course papers (paid key), only with $PERMISSION_FLAG        20 to 60 min [2 h]"
+echo "     (servers stopped)"
+echo "  b. public_readers     21,643 images (USPTO, UOB, CLEF, ACS, BioVista) x 3 readers    1.5 to 3.5 h"
+echo "  c. biominer_biovista  $n_biovista BioVista papers (free key) at 3 to 10 min each          $(( 3 * n_biovista )) to $(( 10 * n_biovista )) min [3 h]"
+echo "     (servers stopped)"
+echo "  e. molrecbench_wild   5,029 images x 3 readers, if converted                        20 to 50 min"
 
 stage course_readers "about 10 min" course_readers
+stage biominer_smoke "15 to 45 min, limit 45 min" biominer_smoke
+stage biominer_course "20 to 60 min, limit 2 h" biominer_course
+stop_servers  # stage b runs the crop readers on the GPU
 stage public_readers "1.5 to 3.5 h" public_readers
-stage biominer_biovista "$(( 15 + 3 * n_biovista )) to $(( 25 + 10 * n_biovista )) min" biominer_biovista
-stage biominer_course "20 to 60 min" biominer_course
-stop_servers  # free the GPU for the crop readers in stage e
+stage biominer_biovista "$(( 3 * n_biovista )) to $(( 10 * n_biovista )) min, limit 3 h" biominer_biovista
+stop_servers  # stage e runs the crop readers on the GPU
 stage molrecbench_wild "20 to 50 min" molrecbench_wild
 
 echo "run_all.sh finished $(date). Outputs: results/aws*, outputs/work*/biominer_output. Stopping the instance."

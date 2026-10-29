@@ -15,7 +15,7 @@ recognizers:
   molglyph:
     device: cuda
   biominer:
-    config_path: BioMiner/config/molcensus_free.yaml    # free Gemini key, gemini-3.5-flash; course papers
+    config_path: BioMiner/config/molcensus_paid.yaml    # paid Gemini key, gemini-3.5-flash: course papers,
                                                         # only with run_all.sh's permission flag
 
 public_check:

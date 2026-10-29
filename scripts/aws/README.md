@@ -1,44 +1,51 @@
 # GPU run on AWS
 
 One trip to a single-GPU instance runs everything that needs a GPU: three crop readers (MolScribe,
-MolSight, MolGlyph) on the course crops and on the full public sets, and BioMiner end to end on
-BioVista papers and, with permission, on the course papers. Scoring of the course papers happens
-back on the Mac. **The ground-truth CSV never leaves the Mac**: the instance uses a header-only
-placeholder (`placeholder_ground_truth.csv`).
+MolSight, MolGlyph) on the course crops and on the full public sets, and BioMiner end to end on the
+course papers (paid Gemini key, with permission) and on BioVista papers (free key). Scoring of the
+course papers happens back on the Mac. **The ground-truth CSV never leaves the Mac**: the instance
+uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 | File | What it does |
 |---|---|
 | `setup.sh` | Installs everything on a fresh instance. Safe to rerun. Log: `~/setup.log` |
-| `run_all.sh` | Runs stages a to e, then stops the instance. Logs: `~/runs/` |
-| `patch_biominer.py` | Local BioMiner edits: one GPU, retries for failed MLLM calls (called by setup.sh) |
-| `biominer_gemini.py` | Writes BioMiner's Gemini configs from the keys file and tests each key (called by setup.sh) |
+| `run_all.sh` | Runs the stages in order, then stops the instance. Logs: `~/runs/` |
+| `patch_biominer.py` | Local BioMiner edits: one GPU, retries for failed MLLM calls, token counts (called by setup.sh) |
+| `biominer_gemini.py` | Writes BioMiner's two Gemini configs (free key, paid key) and tests both keys (called by setup.sh) |
 | `../../configs/aws*.yaml` | Instance configs; `aws_score.yaml` is for scoring on the Mac |
 
 ## Before launch (on the Mac)
 
-1. AWS: quota of at least 8 vCPUs for "Running On-Demand G and VT instances" in your region, the AWS
-   CLI logged in (`aws configure`), and a billing alarm.
+1. AWS: the AWS CLI logged in (`aws configure`), a billing alarm, and a quota of at least 8 vCPUs for
+   "Running On-Demand G and VT instances". Check it (read-only) and use a region that shows 8:
+
+   ```bash
+   for r in us-east-1 us-east-2; do
+     echo "$r: $(aws service-quotas get-service-quota --region $r --service-code ec2 --quota-code L-DB2E81BA --query Quota.Value --output text)"
+   done
+   ```
+
 2. Hugging Face: accept the terms at https://huggingface.co/jiaxianustc/MolGlyph (it is gated; the
    dry run here got 401 without that) and create a read token.
-3. Gemini: one free-tier key, used for every BioMiner run (public papers and the course papers).
-   Every run uses `gemini-3.5-flash` (set in `biominer_gemini.py`): in a test on 2026-10-29,
-   `gemini-3.8-flash` returned 503 "high demand" twice, while `gemini-3.5-flash` read an image with
-   `response_format: json_object` correctly after one 503.
+3. Gemini: two keys. The free-tier key reads public papers (the smoke test and the BioVista papers);
+   the paid-tier key reads the six course papers. Both use `gemini-3.5-flash` (set in
+   `biominer_gemini.py`): in a test on 2026-10-29, `gemini-3.8-flash` returned 503 "high demand"
+   twice, while `gemini-3.5-flash` read an image with `response_format: json_object` correctly after
+   one 503.
 4. The keys file, outside the repo: `~/.molcensus/molcensus_keys.env` (folder mode 700, file mode
    600). It starts as a template with these names and empty values; fill them in with an editor:
 
    | Name | What |
    |---|---|
    | `HF_TOKEN` | Hugging Face read token (MolGlyph's terms accepted first) |
-   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: every BioMiner run |
-
-   `GEMINI_API_KEY_PAID`, if it is still in the file, is not used.
+   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: the smoke test and the BioVista papers |
+   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: the six course papers |
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
    BioVista's labels go in `data/biovista/labels/` (500 `<name>_structure.csv` plus `<name>_data.csv`)
    and `data/biovista/structure_annotation/` (`labels/INDEX_general_PL_*.2020`, `data/<pdb id>/`).
-6. Course papers: stage d sends the six course PDFs to Gemini only if the permission file
+6. Course papers: stage d sends the six course PDFs to Gemini (paid key) only if the permission file
    `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path on the Mac
    (outside the repo) and records who approved it, how, when and for what; "Copy up" sends it.
    Stage d prints it into its log.
@@ -50,7 +57,7 @@ g6.2xlarge (L4, about $0.98/h on demand in us-east-1) or g5.2xlarge (A10G, about
 `run_all.sh` ends with `shutdown`, and with "terminate" the disk and all results would be deleted.
 
 ```bash
-REGION=us-east-1
+REGION=us-east-1   # the region where the quota check above shows 8
 AMI=$(aws ssm get-parameter --region $REGION --query Parameter.Value --output text \
   --name /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id)
 aws ec2 create-key-pair --region $REGION --key-name molcensus --query KeyMaterial --output text > ~/.ssh/molcensus.pem
@@ -67,8 +74,28 @@ HOST=ubuntu@$(aws ec2 describe-instances --region $REGION --instance-ids $ID --q
 SSH="ssh -i ~/.ssh/molcensus.pem"
 ```
 
-The key pair and security group only need creating once. After a stop and start, the public IP
-changes: rerun the `HOST=` line.
+The key pair and security group only need creating once. If `run-instances` fails with
+`InsufficientInstanceCapacity`, wait a few minutes and run it again, or add `--subnet-id` with a subnet
+in another zone (list them: `aws ec2 describe-subnets --region $REGION --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text`).
+
+### Reconnect from a new terminal
+
+```bash
+REGION=us-east-1   # the region you launched in
+SSH="ssh -i ~/.ssh/molcensus.pem"
+ID=$(aws ec2 describe-instances --region $REGION \
+  --filters Name=tag:Name,Values=molcensus Name=instance-state-name,Values=running,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+HOST=ubuntu@$(aws ec2 describe-instances --region $REGION --instance-ids $ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+echo "$ID $HOST"   # a stopped instance has no address ("None"): start it first (see "Copy back")
+```
+
+If SSH times out because your network (and so your IP address) changed, add the new address:
+
+```bash
+SG=$(aws ec2 describe-security-groups --region $REGION --filters Name=group-name,Values=molcensus-ssh --query 'SecurityGroups[0].GroupId' --output text)
+aws ec2 authorize-security-group-ingress --region $REGION --group-id $SG --protocol tcp --port 22 --cidr "$(curl -s https://checkip.amazonaws.com)/32"
+```
 
 ## Copy up
 
@@ -77,6 +104,7 @@ cd ~/Professional/MolCensus
 # Code: only tracked files, so nothing private (data/, results/predictions/, results/scored/) goes up.
 git archive --format=tar HEAD | $SSH $HOST 'mkdir -p molcensus && tar -x -C molcensus'
 scp -i ~/.ssh/molcensus.pem ~/.molcensus/molcensus_keys.env $HOST:molcensus_keys.env
+$SSH $HOST chmod 600 molcensus_keys.env
 # The 237 course crops and their index (run_all.sh rewrites the Mac paths in it).
 $SSH $HOST 'mkdir -p molcensus/outputs/work molcensus/data/biovista/pdfs molcensus/data/pdfs'
 rsync -a -e "$SSH" outputs/work/crops_moldet outputs/work/crops_index.csv $HOST:molcensus/outputs/work/
@@ -108,16 +136,33 @@ need Gemini.
 $SSH $HOST "mkdir -p runs && tmux new -d -s run 'bash molcensus/scripts/aws/run_all.sh 2>&1 | tee -a runs/run_all.log'"
 ```
 
-| Stage | What | Needs | Estimate |
-|---|---|---|---|
-| a. course_readers | MolScribe, MolSight, MolGlyph on the 237 course crops | crops copied up | about 10 min |
-| b. public_readers | the three readers on all of USPTO, UOB, CLEF, ACS and BioVista OCSR (21,643 images), scored on the instance | downloads itself | 1.5 to 3.5 h |
-| c. biominer_biovista | BioMiner servers, smoke test on `example/pdfs/68_6r8r.pdf`, then every BioVista PDF | free Gemini key | 15 min plus 3 to 10 min per paper |
-| d. biominer_course | BioMiner on the six course PDFs | free Gemini key, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min |
-| e. molrecbench_wild | the three readers on MolRecBench-Wild | `data/public/molrecbench_wild/molrecbench_wild.csv` | 20 to 50 min |
+What to watch first: the smoke test passing, then stage d starting its first course paper.
 
-The estimates are extrapolated from Mac CPU timings, not measured on a GPU. The instance stops
-itself after the last stage, or after 10 hours at the latest (`sudo shutdown -c` cancels that).
+```bash
+$SSH $HOST 'grep -E "biominer_smoke|biominer_course" runs/run_all.log; tail -n 1 runs/biominer_smoke.log'
+$SSH $HOST 'grep "BioMiner: paper" runs/biominer_course.log | head -n 3'
+```
+
+You want `[biominer_smoke] done after N min`, a last smoke-log line `smoke test passed; MLLM calls
+lost after all retries: 0` (or a small number), then `[biominer_course] started` and
+`BioMiner: paper 1` in stage d's log. If the smoke test fails, stages d and c are skipped.
+
+| Order | Stage | What | Needs | Estimate | Time limit |
+|---|---|---|---|---|---|
+| 1 | a. course_readers | MolScribe, MolSight, MolGlyph on the 237 course crops | crops copied up | about 10 min | none |
+| 2 | biominer_smoke | start the BioMiner servers, then BioMiner on `example/pdfs/68_6r8r.pdf` | free key | 15 to 45 min | 45 min |
+| 3 | d. biominer_course | BioMiner on the six course PDFs | smoke test passed, paid key, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min | 2 h |
+| | | servers stopped, GPU memory checked free | | | |
+| 4 | b. public_readers | the three readers on all of USPTO, UOB, CLEF, ACS and BioVista OCSR (21,643 images), scored on the instance | downloads itself | 1.5 to 3.5 h | none |
+| 5 | c. biominer_biovista | BioMiner on every BioVista PDF | smoke test passed, free key | 3 to 10 min per paper | 3 h |
+| | | servers stopped | | | |
+| 6 | e. molrecbench_wild | the three readers on MolRecBench-Wild | `data/public/molrecbench_wild/molrecbench_wild.csv` | 20 to 50 min | none |
+
+The estimates are extrapolated from Mac CPU timings, not measured on a GPU. A stage that reaches its
+time limit stops cleanly: the papers it finished keep their output and `run_info.json`, no done-marker
+is written, and rerunning `run_all.sh` continues with the unfinished papers. The instance stops itself
+after the last stage, or after 10 hours at the latest (`sudo shutdown -c` cancels that); if every stage
+runs to its limit or upper estimate, stage e may not fit.
 Stage c copies `data/biovista/labels/` to `BioVista/bioactivity_extraction/labels/` and
 `data/biovista/structure_annotation/` to `BioVista/structure_annotation/` inside the BioMiner clone,
 then adds `--biovista_evaluate`. If either folder is missing it runs without that flag. Where the two
@@ -128,11 +173,18 @@ label sets come from is in docs/methods.md (BioVista paragraph).
 ```bash
 $SSH $HOST 'tail -n 15 runs/run_all.log; ls runs/*.done 2>/dev/null; nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv'
 $SSH $HOST 'tail -n 5 runs/public_readers.log'                   # one stage's log
-$SSH $HOST 'cat molcensus/outputs/work*/biominer_output/*/run_info.json'   # BioMiner: models, errors, lost MLLM calls
+$SSH $HOST 'cat molcensus/outputs/work*/biominer_output/*/run_info.json'   # BioMiner: tier, model, errors, lost calls, tokens
 $SSH -t $HOST 'tmux attach -t run'                                # watch live; detach with Ctrl-b d
 ```
 
 To redo a stage, delete its `runs/<stage>.done` and start `run_all.sh` again; done stages are skipped.
+BioMiner papers that already have a `run_info.json` are reused, not rerun; delete a paper's folder to
+rerun it.
+
+For cost, each paper's `run_info.json` has `input_tokens` and `output_tokens` (all answered MLLM calls
+added up), plus `total_tokens`. If `total_tokens` is larger than the two together, the rest is most
+likely the model's thinking tokens; check Google's pricing for how they are billed. The values are
+`null` when no call was answered.
 
 ## Copy back
 
@@ -172,4 +224,6 @@ tool, including `biominer_bioactivity`.
 ```bash
 $SSH $HOST 'rm -rf molcensus/data/pdfs molcensus/outputs/work/crops_moldet molcensus_keys.env'
 aws ec2 terminate-instances --region $REGION --instance-ids $ID   # also deletes its disk
+aws ec2 wait instance-terminated --region $REGION --instance-ids $ID
+aws ec2 describe-volumes --region $REGION --query 'Volumes[].[VolumeId,State,Size,CreateTime]' --output table   # should list none
 ```

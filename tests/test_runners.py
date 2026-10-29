@@ -19,8 +19,11 @@ args = dict(a.lstrip("-").split("=", 1) for a in sys.argv[1:])
 name = pathlib.Path(args["pdf"]).name.split(".")[0]
 out = pathlib.Path(args["output_dir"]) / "extraction_gemini-2.5-flash" / name
 out.mkdir(parents=True)
-if name == "1":  # two failed MLLM calls, as BioMiner logs them
+pathlib.Path(args["output_dir"]).parent.joinpath("calls.log").open("a").write(name + "\n")
+if name == "1":  # two lost MLLM calls and two answered ones, as patched BioMiner logs them
     print("gemini-x 0 try failed: Error code: 429\ngemini-x 0 try failed: Error code: 429")
+    print('MOLCENSUS_USAGE {"input": 1000, "output": 200, "total": 1300}')
+    print('MOLCENSUS_USAGE {"input": 500, "output": 50, "total": 600}')
 s = "moldetv2_bbox_molglyph_ocsr__updated_v3_with_index_split4seg0.125_bg_lo"
 (out / f"{name}_structure_full_output_{s}.csv").write_text("ligand,smiles\n9z,CCCC\n")
 (out / f"{name}_structure_merged_output_{s}_{s}_clean_new.csv").write_text(",ligand,smiles\n0,x,CCCl\n")
@@ -75,7 +78,61 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
     assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x" and info["tier"] == "free"
     assert info["api_failures"] == 2 and info["n_predictions"] == {"biominer": 2, "biominer_bioactivity": 1}
-    assert json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())["api_failures"] == 0
+    assert info["input_tokens"] == 1500 and info["output_tokens"] == 250 and info["total_tokens"] == 1900
+    assert info["mllm_calls_answered"] == 2
+    paper2 = json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())
+    assert paper2["api_failures"] == 0 and paper2["input_tokens"] is None  # no usage lines: unknown, not zero
+
+    # A rerun reuses finished papers instead of calling BioMiner again; force reruns them.
+    again = run_biominer(pdfs, settings, tmp_path / "out")
+    assert (tmp_path / "out" / "calls.log").read_text().split() == ["1", "2", "3"]
+    assert again["biominer"].drop(columns="runtime_s").equals(structure.drop(columns="runtime_s"))
+    run_biominer({1: pdfs[1]}, settings, tmp_path / "out", force=True)
+    assert (tmp_path / "out" / "calls.log").read_text().split() == ["1", "2", "3", "1"]
+
+
+# Paper 2 hangs, as if BioMiner were stuck in retries when the stage time limit sends SIGTERM.
+SLOW_BIOMINER = r'''
+import sys, pathlib, time
+args = dict(a.lstrip("-").split("=", 1) for a in sys.argv[1:])
+name = pathlib.Path(args["pdf"]).name.split(".")[0]
+pathlib.Path(args["output_dir"]).parent.joinpath("calls.log").open("a").write(name + "\n")
+out = pathlib.Path(args["output_dir"]) / "extraction_gemini-x" / name
+out.mkdir(parents=True)
+if name == "2" and pathlib.Path(args["output_dir"]).parent.joinpath("hang").exists():
+    time.sleep(60)
+(out / f"{name}_structure_merged_output_a_b.csv").write_text("ligand,smiles\n1,CCO\n")
+'''
+
+
+def test_biominer_stops_on_sigterm_and_resumes(tmp_path):
+    import os
+    import signal
+    import threading
+    import time
+
+    repo = tmp_path / "BioMiner"
+    repo.mkdir()
+    (repo / "example_open_source.py").write_text(SLOW_BIOMINER)
+    pdfs = {p: tmp_path / f"{p}.pdf" for p in (1, 2, 3)}
+    for path in pdfs.values():
+        path.write_bytes(b"%PDF-1.4")
+    settings = {"repo_dir": str(repo), "python_executable": sys.executable, "config_path": "none.yaml", "timeout_s": 120}
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "hang").touch()
+
+    threading.Timer(3, os.kill, (os.getpid(), signal.SIGTERM)).start()  # the stage time limit
+    started = time.monotonic()
+    first = run_biominer(pdfs, settings, out)
+    assert time.monotonic() - started < 30  # the hanging paper was stopped, not waited for
+    assert sorted(first["biominer"]["paper_id"]) == [1]  # the finished paper is kept
+    assert (out / "1" / "run_info.json").exists() and not (out / "2" / "run_info.json").exists()
+
+    (out / "hang").unlink()
+    second = run_biominer(pdfs, settings, out)
+    assert sorted(second["biominer"]["paper_id"]) == [1, 2, 3]
+    assert (out / "calls.log").read_text().split() == ["1", "2", "2", "3"]  # paper 1 was not run again
 
 
 # Writes one good row and one per-crop error, then crashes before the third crop.

@@ -72,10 +72,11 @@ The public check caught it, and a three-line patch fixed it
 
 BioMiner gets two local edits on the GPU instance, made by `scripts/aws/patch_biominer.py` and never
 pushed upstream. Its model servers use one GPU instead of four. An MLLM call that fails with a rate
-limit (429), an overloaded model (503) or a network timeout is retried up to 5 times, waiting 15, 30,
-60, 120 and 240 seconds, because BioMiner tries once and silently uses an empty answer when a call
-fails. Its API client gets a 300-second timeout. Prompts, models and parsing are unchanged. Calls that
-still fail are counted per paper in `run_info.json`. All BioMiner runs use `gemini-3.5-flash`.
+limit (429), a server error (500, 502, 503, 504) or a network timeout is retried up to 5 times,
+waiting 15, 30, 60, 120 and 240 seconds, because BioMiner tries once and silently uses an empty answer
+when a call fails. Its API client gets a 300-second timeout, and each answered call reports its token
+counts. Prompts, models and parsing are unchanged. Calls that still fail, and the tokens used, are
+recorded per paper in `run_info.json`. All BioMiner runs use `gemini-3.5-flash`.
 
 Every number, with its interval, is in [results/RESULTS.md](results/RESULTS.md). The full run takes
 about 40 minutes on a laptop CPU (Apple M5); package versions are in `results/environment.json`.

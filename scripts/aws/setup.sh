@@ -7,8 +7,8 @@
 #
 # Needs ~/molcensus_keys.env, copied up from the Mac (never committed):
 #   HF_TOKEN=...              Hugging Face read token; accept MolGlyph's terms on its model page first
-#   GEMINI_API_KEY_FREE=...   every BioMiner run (course papers only with run_all.sh's permission flag)
-#   (GEMINI_API_KEY_PAID is no longer used.)
+#   GEMINI_API_KEY_FREE=...   public papers (stage c and the smoke test)
+#   GEMINI_API_KEY_PAID=...   the six course papers (stage d, only with run_all.sh's permission flag)
 # The Gemini model (gemini-3.5-flash) is set in biominer_gemini.py, not here.
 set -uo pipefail
 exec > >(tee -a "$HOME/setup.log") 2>&1
@@ -30,6 +30,7 @@ fail() { echo "SETUP FAILED: $*"; exit 1; }
 [ -f "$KEYS" ] || fail "missing $KEYS (see scripts/aws/README.md)"
 chmod 600 "$KEYS"
 set -a; . "$KEYS"; set +a  # HF_TOKEN for the gated MolGlyph download
+export HF_HUB_DOWNLOAD_TIMEOUT=180  # seconds per network read; huggingface_hub's default is 10
 
 step "GPU"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || fail "nvidia-smi failed: no GPU driver"

@@ -149,18 +149,22 @@ One run is created in the `molcensus` project (`--wandb-project` and `--wandb-en
    environments, model weights).
 2. Give it an MLLM. MolCensus uses Gemini through Gemini's OpenAI-compatible endpoint.
    `scripts/aws/biominer_gemini.py --keys <keys file> --biominer <clone> --check` writes
-   `BioMiner/config/molcensus_free.yaml` (free-tier key, `gemini-3.5-flash`, 1 paper at a time)
-   inside the clone, then sends one test request shaped like BioMiner's own. Public and course papers
-   both use it; `run_all.sh` sends the course PDFs only when its permission flag file exists. The
-   keys file and the config stay outside this repo. BioMiner picks its Gemini prompts for any model
-   name without "gpt".
+   `BioMiner/config/molcensus_free.yaml` (free-tier key, public papers) and `molcensus_paid.yaml`
+   (paid-tier key, course papers) inside the clone, both with `gemini-3.5-flash`, then sends one test
+   request per key shaped like BioMiner's own. `run_all.sh` sends the course PDFs only when its
+   permission flag file exists. The keys file and the configs stay outside this repo. BioMiner picks
+   its Gemini prompts for any model name without "gpt".
 3. Start its MinerU, MolDet and OCSR servers.
 4. Copy `.env.example` to `.env` and set `BIOMINER_DIR` and `BIOMINER_PYTHON`.
-5. Set `recognizers.biominer.enabled: true` and `config_path: BioMiner/config/molcensus_free.yaml`.
+5. Set `recognizers.biominer.enabled: true` and `config_path` to one of those configs.
 
-Each paper's output folder gets `run_info.json` with the model names, the key tier and the number of
-MLLM calls lost after all retries. Unpatched BioMiner tries each call once and carries on with an empty
-answer, so check that number: a rate-limited run otherwise looks normal, just with fewer molecules.
+Each paper's output folder gets `run_info.json` with the model names, the key tier, the number of
+MLLM calls lost after all retries, and the input, output and total tokens of the answered calls.
+Unpatched BioMiner tries each call once and carries on with an empty answer, so check the lost-call
+number: a rate-limited run otherwise looks normal, just with fewer molecules. A paper that already has
+`run_info.json` counts as finished: a rerun reuses it (`--force` reruns it). On SIGTERM, for example
+from a time limit, the wrapper stops the paper in progress and saves the predictions of the finished
+ones.
 
 The wrapper calls `example_open_source.py --pdf <paper> --output_dir <dir>` for each paper and reads
 two tables from `<dir>/extraction_<model>/<name>/`:

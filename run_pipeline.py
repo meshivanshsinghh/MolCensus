@@ -36,7 +36,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", default=",".join(STEPS), help=f"comma-separated subset of {STEPS}")
     parser.add_argument("--papers", type=int, nargs="*", help="override the paper list in the config")
     parser.add_argument("--tools", help="comma-separated recognizers to run; overrides 'enabled' in the config")
-    parser.add_argument("--force", action="store_true", help="re-render pages even if images already exist")
+    parser.add_argument("--force", action="store_true",
+                        help="re-render pages even if images already exist, and rerun BioMiner papers that finished earlier")
     parser.add_argument("--wandb", action="store_true", help="publish metrics (no SMILES) to Weights & Biases")
     parser.add_argument("--wandb-project", default="molcensus", help="W&B project name")
     parser.add_argument("--wandb-entity", default=None, help="W&B entity (defaults to WANDB_ENTITY or your account)")
@@ -135,7 +136,7 @@ def main() -> None:
                 elif tool == "biominer":
                     from molcensus.recognizers.biominer_runner import run_biominer
 
-                    outputs = run_biominer(pdfs, settings, work_dir / "biominer_output")  # biominer and biominer_bioactivity
+                    outputs = run_biominer(pdfs, settings, work_dir / "biominer_output", force=args.force)
                 else:
                     log.warning("No runner for recognizer '%s'; skipping", tool)
                     continue
