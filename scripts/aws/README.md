@@ -20,23 +20,28 @@ placeholder (`placeholder_ground_truth.csv`).
    CLI logged in (`aws configure`), and a billing alarm.
 2. Hugging Face: accept the terms at https://huggingface.co/jiaxianustc/MolGlyph (it is gated; the
    dry run here got 401 without that) and create a read token.
-3. Gemini: a free-tier key (public papers) and, only once the course allows sending its PDFs to
-   Google, a paid key. Every BioMiner run uses `gemini-3.5-flash` (set in `biominer_gemini.py`):
-   in a test on 2026-10-29, `gemini-3.8-flash` returned 503 "high demand" twice, while
-   `gemini-3.5-flash` read an image with `response_format: json_object` correctly after one 503.
+3. Gemini: one free-tier key, used for every BioMiner run (public papers and the course papers).
+   Every run uses `gemini-3.5-flash` (set in `biominer_gemini.py`): in a test on 2026-10-29,
+   `gemini-3.8-flash` returned 503 "high demand" twice, while `gemini-3.5-flash` read an image with
+   `response_format: json_object` correctly after one 503.
 4. The keys file, outside the repo: `~/.molcensus/molcensus_keys.env` (folder mode 700, file mode
    600). It starts as a template with these names and empty values; fill them in with an editor:
 
    | Name | What |
    |---|---|
    | `HF_TOKEN` | Hugging Face read token (MolGlyph's terms accepted first) |
-   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: public papers only |
-   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: course papers; leave empty until permitted |
+   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: every BioMiner run |
+
+   `GEMINI_API_KEY_PAID`, if it is still in the file, is not used.
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
    BioVista's labels go in `data/biovista/labels/` (500 `<name>_structure.csv` plus `<name>_data.csv`)
    and `data/biovista/structure_annotation/` (`labels/INDEX_general_PL_*.2020`, `data/<pdb id>/`).
+6. Course papers: stage d sends the six course PDFs to Gemini only if the permission file
+   `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path on the Mac
+   (outside the repo) and records who approved it, how, when and for what; "Copy up" sends it.
+   Stage d prints it into its log.
 
 ## Launch
 
@@ -73,12 +78,14 @@ cd ~/Professional/MolCensus
 git archive --format=tar HEAD | $SSH $HOST 'mkdir -p molcensus && tar -x -C molcensus'
 scp -i ~/.ssh/molcensus.pem ~/.molcensus/molcensus_keys.env $HOST:molcensus_keys.env
 # The 237 course crops and their index (run_all.sh rewrites the Mac paths in it).
-$SSH $HOST 'mkdir -p molcensus/outputs/work molcensus/data/biovista/pdfs'
+$SSH $HOST 'mkdir -p molcensus/outputs/work molcensus/data/biovista/pdfs molcensus/data/pdfs'
 rsync -a -e "$SSH" outputs/work/crops_moldet outputs/work/crops_index.csv $HOST:molcensus/outputs/work/
 # BioVista PDFs and labels (labels/ and structure_annotation/, for --biovista_evaluate in stage c).
 rsync -az --exclude download/ -e "$SSH" data/biovista/ $HOST:molcensus/data/biovista/
-# Only with permission to send the course PDFs to Gemini (stage d is skipped otherwise):
-# rsync -a -e "$SSH" data/pdfs/*.pdf $HOST:molcensus/data/pdfs/ && $SSH $HOST touch COURSE_PDFS_PERMISSION_GIVEN
+# The six course PDFs and the permission file. Without the file, stage d skips, with no error.
+rsync -a -e "$SSH" data/pdfs/*.pdf $HOST:molcensus/data/pdfs/
+scp -i ~/.ssh/molcensus.pem ~/COURSE_PDFS_PERMISSION_GIVEN $HOST:COURSE_PDFS_PERMISSION_GIVEN
+$SSH $HOST 'ls molcensus/data/pdfs; cat COURSE_PDFS_PERMISSION_GIVEN'   # check both arrived
 ```
 
 Never copy up `data/ground_truth_*.csv`, `results/predictions/` or `results/scored/`.
@@ -106,7 +113,7 @@ $SSH $HOST "mkdir -p runs && tmux new -d -s run 'bash molcensus/scripts/aws/run_
 | a. course_readers | MolScribe, MolSight, MolGlyph on the 237 course crops | crops copied up | about 10 min |
 | b. public_readers | the three readers on all of USPTO, UOB, CLEF, ACS and BioVista OCSR (21,643 images), scored on the instance | downloads itself | 1.5 to 3.5 h |
 | c. biominer_biovista | BioMiner servers, smoke test on `example/pdfs/68_6r8r.pdf`, then every BioVista PDF | free Gemini key | 15 min plus 3 to 10 min per paper |
-| d. biominer_course | BioMiner on the six course PDFs | paid key, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min |
+| d. biominer_course | BioMiner on the six course PDFs | free Gemini key, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min |
 | e. molrecbench_wild | the three readers on MolRecBench-Wild | `data/public/molrecbench_wild/molrecbench_wild.csv` | 20 to 50 min |
 
 The estimates are extrapolated from Mac CPU timings, not measured on a GPU. The instance stops

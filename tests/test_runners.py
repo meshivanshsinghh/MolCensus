@@ -41,7 +41,7 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     repo = tmp_path / "BioMiner"
     repo.mkdir()
     (repo / "example_open_source.py").write_text(FAKE_BIOMINER)
-    (repo / "c.yaml").write_text("model:\n  text_mllm_type: gemini-x\n  vision_mllm_type: gemini-x\n")
+    (repo / "c.yaml").write_text("molcensus_tier: free\nmodel:\n  text_mllm_type: gemini-x\n  vision_mllm_type: gemini-x\n")
     pdfs = {}
     for paper in (1, 2, 3):
         pdfs[paper] = tmp_path / f"{paper}.pdf"
@@ -73,7 +73,7 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
 
     # Every paper records the model names and how many MLLM calls failed.
     info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
-    assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x"
+    assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x" and info["tier"] == "free"
     assert info["api_failures"] == 2 and info["n_predictions"] == {"biominer": 2, "biominer_bioactivity": 1}
     assert json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())["api_failures"] == 0
 

@@ -18,8 +18,8 @@ The structure tables are written before BioMiner's final merge step, and that st
 (it raises ValueError when labels cannot be mapped to SMILES). The structure tables are then kept,
 and each kept row notes the failure in its error column.
 
-Each paper's output folder also gets run_info.json: the MLLM names from BioMiner's config, the
-error if any, and how many MLLM calls failed. BioMiner tries each call once and carries on with an
+Each paper's output folder also gets run_info.json: the MLLM names and key tier from BioMiner's
+config, the error if any, and how many MLLM calls failed. BioMiner tries each call once and carries on with an
 empty answer, so a rate-limited run looks normal unless that count is checked.
 
 Requirements (from the BioMiner README): one 24 GB GPU in API mode, the MinerU,
@@ -58,14 +58,19 @@ OUTPUT_TABLES = [
 ]
 
 
-def _model_names(config_file: Path) -> dict:
-    """The MLLM names in BioMiner's config. They are logged and saved with every run."""
+def _mllm_settings(config_file: Path) -> dict:
+    """The MLLM names and key tier in BioMiner's config. They are logged and saved with every run."""
     try:
-        model = yaml.safe_load(config_file.read_text()).get("model") or {}
-    except (OSError, yaml.YAMLError, AttributeError) as exc:
-        log.warning("BioMiner: cannot read model names from %s (%s)", config_file, exc)
-        model = {}
-    return {"text_model": model.get("text_mllm_type", "unknown"), "vision_model": model.get("vision_mllm_type", "unknown")}
+        config = yaml.safe_load(config_file.read_text()) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        log.warning("BioMiner: cannot read %s (%s)", config_file, exc)
+        config = {}
+    model = config.get("model") or {}
+    return {
+        "text_model": model.get("text_mllm_type", "unknown"),
+        "vision_model": model.get("vision_mllm_type", "unknown"),
+        "tier": config.get("molcensus_tier", "unknown"),  # written by scripts/aws/biominer_gemini.py
+    }
 
 
 def _read_tables(paper_output: Path, pattern: str) -> list[pd.DataFrame]:
@@ -128,8 +133,9 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path) -> di
     python_exe = expand(str(settings.get("python_executable", ""))) or "python"
 
     environment = {**os.environ, "PYTHONPATH": str(repo_dir)}
-    models = _model_names(repo_dir / settings["config_path"])
-    log.info("BioMiner models: text %s, vision %s (config %s)", models["text_model"], models["vision_model"], settings["config_path"])
+    models = _mllm_settings(repo_dir / settings["config_path"])
+    log.info("BioMiner models: text %s, vision %s, key tier %s (config %s)",
+             models["text_model"], models["vision_model"], models["tier"], settings["config_path"])
     records = {tool: [] for tool, _ in OUTPUT_TABLES}
     for paper_id, pdf_path in pdfs.items():
         paper_output = output_root / str(paper_id)

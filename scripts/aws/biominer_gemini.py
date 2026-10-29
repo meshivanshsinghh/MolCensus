@@ -3,18 +3,18 @@
 Runs on the GPU instance with the BioMiner environment's Python (it needs PyYAML, Pillow and openai,
 which that environment has). It reads a keys file that never enters git:
 
-    GEMINI_API_KEY_FREE=...    free tier: public papers only (BioMiner's examples, BioVista)
-    GEMINI_API_KEY_PAID=...    paid tier: the six course papers, only once permission is given
+    GEMINI_API_KEY_FREE=...    free tier: every BioMiner run (public papers, and the course papers,
+                               which run_all.sh only sends when its permission flag file exists)
 
 Every BioMiner run uses MODEL (below) for both text and vision calls. The wrapper copies the name
 from the config into each paper's run_info.json.
 
-and writes two configs inside the BioMiner clone, next to its default one:
+and writes one config inside the BioMiner clone, next to its default one:
 
-    BioMiner/config/molcensus_free.yaml    n_jobs 1
-    BioMiner/config/molcensus_paid.yaml    n_jobs 2
+    BioMiner/config/molcensus_free.yaml    n_jobs 1, molcensus_tier: free
 
-BioMiner handles n_jobs papers at a time and makes its MLLM calls for one paper one after another,
+The config also records the tier (molcensus_tier, a key BioMiner ignores) so the wrapper can copy it
+into run_info.json. BioMiner handles n_jobs papers at a time and makes its MLLM calls for one paper one after another,
 so n_jobs is also the number of requests in flight. Its load_prompts() picks the
 gemini-series-prompt folder for any model name without "gpt" in it.
 
@@ -46,7 +46,7 @@ BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 MODEL = "gemini-3.5-flash"
 DEFAULT_CONFIG = "BioMiner/config/default_open_source.yaml"
 CHECK_PROMPT = "BioMiner/commons/prompts/gemini-series-prompt/prompt_for_structure_full_updated_v3_with_index.txt"
-TIERS = {"free": 1, "paid": 2}  # tier -> n_jobs (papers, and so MLLM requests, at a time)
+TIERS = {"free": 1}  # tier -> n_jobs (papers, and so MLLM requests, at a time)
 
 
 def read_keys(path: Path) -> dict[str, str]:
@@ -69,6 +69,7 @@ def write_configs(keys: dict[str, str], biominer: Path) -> list[Path]:
         config = copy.deepcopy(base)
         config["grounding_gpu_num"] = 1  # one GPU: one request at a time to each model server
         config["n_jobs"] = n_jobs
+        config["molcensus_tier"] = tier
         config["model"].update(
             base_url=BASE_URL, api_key=api_key, text_mllm_type=MODEL, vision_mllm_type=MODEL
         )

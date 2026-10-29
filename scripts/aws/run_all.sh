@@ -13,7 +13,7 @@ BIOMINER=$HOME/BioMiner
 BIOMINER_PY=$HOME/miniconda3/envs/BioMiner/bin/python
 PY=$MOLCENSUS/.venv/bin/python
 RUNS=$HOME/runs
-PERMISSION_FLAG=$HOME/COURSE_PDFS_PERMISSION_GIVEN  # create it only once the course allows sending the PDFs to Gemini
+PERMISSION_FLAG=$HOME/COURSE_PDFS_PERMISSION_GIVEN  # who approved sending the course PDFs to Gemini; copied up from the Mac
 READERS=molscribe,molsight,molglyph
 SKIP=3  # exit code a stage returns when its data is missing
 mkdir -p "$RUNS"
@@ -111,11 +111,12 @@ biominer_biovista() {
   [ -s results/aws_biovista/predictions/biominer_predictions.csv ] || { echo "no BioVista predictions"; return 1; }
 }
 
-# d. BioMiner on the six course PDFs (paid Gemini key), only with written permission.
+# d. BioMiner on the six course PDFs (free Gemini key, gemini-3.5-flash), only with the permission flag file.
 biominer_course() {
   [ -f "$PERMISSION_FLAG" ] || { echo "no permission flag $PERMISSION_FLAG"; return $SKIP; }
   ls data/pdfs/*.pdf > /dev/null 2>&1 || { echo "no course PDFs in data/pdfs"; return $SKIP; }
-  [ -f "$BIOMINER/BioMiner/config/molcensus_paid.yaml" ] || { echo "no molcensus_paid.yaml: no paid Gemini key"; return $SKIP; }
+  [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
+  echo "Permission record ($PERMISSION_FLAG):"; cat "$PERMISSION_FLAG"; echo
   start_servers || return 1
   "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools biominer
   [ -s results/aws/predictions/biominer_predictions.csv ] || { echo "no course BioMiner predictions"; return 1; }
