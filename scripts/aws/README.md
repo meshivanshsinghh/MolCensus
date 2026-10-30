@@ -16,8 +16,15 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 ## Before launch (on the Mac)
 
-1. AWS: the AWS CLI logged in (`aws configure`), a billing alarm, and a quota of at least 8 vCPUs for
-   "Running On-Demand G and VT instances". Check it (read-only) and use a region that shows 8:
+1. AWS: install AWS CLI 2.32.0 or later (`aws --version`), sign in, and confirm who you are:
+
+   ```bash
+   aws login                     # short-term credentials, valid for at most 12 hours; add --remote if no browser opens
+   aws sts get-caller-identity
+   ```
+
+   Also set a billing alarm, and check (read-only) the quota of at least 8 vCPUs for "Running
+   On-Demand G and VT instances". It shows 8 in us-east-2, which the commands below use:
 
    ```bash
    for r in us-east-1 us-east-2; do
@@ -27,8 +34,9 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 2. Hugging Face: accept the terms at https://huggingface.co/jiaxianustc/MolGlyph (it is gated; the
    dry run here got 401 without that) and create a read token.
-3. Gemini: two keys. The free-tier key reads public papers (the smoke test and the BioVista papers);
-   the paid-tier key reads the six course papers. Both use `gemini-3.5-flash` (set in
+3. Gemini: two keys. The free-tier key reads the BioVista papers; the paid-tier key reads the six
+   course papers. `course_tier: paid` in `configs/aws.yaml` picks the key for the course papers, and
+   the smoke test uses the same key as stage d. Both keys use `gemini-3.5-flash` (set in
    `biominer_gemini.py`): in a test on 2026-10-29, `gemini-3.8-flash` returned 503 "high demand"
    twice, while `gemini-3.5-flash` read an image with `response_format: json_object` correctly after
    one 503.
@@ -38,32 +46,52 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
    | Name | What |
    |---|---|
    | `HF_TOKEN` | Hugging Face read token (MolGlyph's terms accepted first) |
-   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: the smoke test and the BioVista papers |
-   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: the six course papers |
+   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: the BioVista papers |
+   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: the smoke test and the six course papers |
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
    BioVista's labels go in `data/biovista/labels/` (500 `<name>_structure.csv` plus `<name>_data.csv`)
    and `data/biovista/structure_annotation/` (`labels/INDEX_general_PL_*.2020`, `data/<pdb id>/`).
-6. Course papers: stage d sends the six course PDFs to Gemini (paid key) only if the permission file
-   `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path on the Mac
-   (outside the repo) and records who approved it, how, when and for what; "Copy up" sends it.
-   Stage d prints it into its log.
+6. Course papers: stage d sends the six course PDFs to Gemini (the `course_tier` key) only if the
+   permission file `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path
+   on the Mac (outside the repo) and records who approved it, how, when and for what; "Copy up" sends
+   it. Stage d prints it into its log, and each paper's `run_info.json` records the tier actually
+   used. If you switch `course_tier` to `free`, also change the Scope line in
+   `~/COURSE_PDFS_PERMISSION_GIVEN` to "free tier" to match.
 
 ## Launch
 
-g6.2xlarge (L4, about $0.98/h on demand in us-east-1) or g5.2xlarge (A10G, about $1.21/h); both have
-24 GB of GPU memory. Check current prices. `--instance-initiated-shutdown-behavior stop` matters:
-`run_all.sh` ends with `shutdown`, and with "terminate" the disk and all results would be deleted.
+g6.2xlarge (L4) or g5.2xlarge (A10G); both have 24 GB of GPU memory. In us-east-1 they cost about
+$0.98 and $1.21 per hour on demand; check the current us-east-2 prices.
+`--instance-initiated-shutdown-behavior stop` matters: `run_all.sh` ends with `shutdown`, and with
+"terminate" the disk and all results would be deleted. Both blocks below are safe to rerun.
+
+One time: the key pair and the security group, each created only if it does not exist yet. The key is
+written to a temporary file first, so a failed call never leaves an empty `.pem`. If AWS still has a
+key pair named `molcensus` but `~/.ssh/molcensus.pem` is gone, delete the old one first
+(`aws ec2 delete-key-pair --region $REGION --key-name molcensus`).
 
 ```bash
-REGION=us-east-1   # the region where the quota check above shows 8
+REGION=us-east-2
+if [ ! -f ~/.ssh/molcensus.pem ]; then
+  (umask 077 && aws ec2 create-key-pair --region $REGION --key-name molcensus --query KeyMaterial --output text \
+    > ~/.ssh/molcensus.pem.new && mv ~/.ssh/molcensus.pem.new ~/.ssh/molcensus.pem) || rm -f ~/.ssh/molcensus.pem.new
+fi
+if ! aws ec2 describe-security-groups --region $REGION --filters Name=group-name,Values=molcensus-ssh \
+     --query 'SecurityGroups[0].GroupId' --output text | grep -q '^sg-'; then
+  SG=$(aws ec2 create-security-group --region $REGION --group-name molcensus-ssh --description "SSH for MolCensus" --query GroupId --output text)
+  aws ec2 authorize-security-group-ingress --region $REGION --group-id $SG --protocol tcp --port 22 --cidr "$(curl -s https://checkip.amazonaws.com)/32"
+fi
+```
+
+Each launch:
+
+```bash
+REGION=us-east-2
+SG=$(aws ec2 describe-security-groups --region $REGION --filters Name=group-name,Values=molcensus-ssh --query 'SecurityGroups[0].GroupId' --output text)
 AMI=$(aws ssm get-parameter --region $REGION --query Parameter.Value --output text \
   --name /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id)
-aws ec2 create-key-pair --region $REGION --key-name molcensus --query KeyMaterial --output text > ~/.ssh/molcensus.pem
-chmod 600 ~/.ssh/molcensus.pem
-SG=$(aws ec2 create-security-group --region $REGION --group-name molcensus-ssh --description "SSH for MolCensus" --query GroupId --output text)
-aws ec2 authorize-security-group-ingress --region $REGION --group-id $SG --protocol tcp --port 22 --cidr "$(curl -s https://checkip.amazonaws.com)/32"
 ID=$(aws ec2 run-instances --region $REGION --image-id $AMI --instance-type g6.2xlarge \
   --key-name molcensus --security-group-ids $SG --instance-initiated-shutdown-behavior stop \
   --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=150,VolumeType=gp3}' \
@@ -74,14 +102,16 @@ HOST=ubuntu@$(aws ec2 describe-instances --region $REGION --instance-ids $ID --q
 SSH="ssh -i ~/.ssh/molcensus.pem"
 ```
 
-The key pair and security group only need creating once. If `run-instances` fails with
+If your IP address changed since the security group was made, add the new one first (see "Reconnect
+from a new terminal"). If `run-instances` fails with
 `InsufficientInstanceCapacity`, wait a few minutes and run it again, or add `--subnet-id` with a subnet
 in another zone (list them: `aws ec2 describe-subnets --region $REGION --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text`).
 
 ### Reconnect from a new terminal
 
 ```bash
-REGION=us-east-1   # the region you launched in
+aws login                     # the sign-in lasts at most 12 hours
+REGION=us-east-2
 SSH="ssh -i ~/.ssh/molcensus.pem"
 ID=$(aws ec2 describe-instances --region $REGION \
   --filters Name=tag:Name,Values=molcensus Name=instance-state-name,Values=running,stopped \

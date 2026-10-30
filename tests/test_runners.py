@@ -165,3 +165,17 @@ def test_crop_reader_keeps_rows_written_before_a_crash(tmp_path):
     assert predictions.loc["b", "pred_smiles"] == "" and predictions.loc["b", "error"] == "OSError: unreadable image"
     assert predictions.loc["c", "pred_smiles"] == "" and predictions.loc["c", "error"] == "fake worker exit code 3"
     assert (predictions["tool"] == "fake").all() and predictions.loc["c", "paper_id"] == 2
+
+
+def test_biominer_tier_picks_its_config(tmp_path):
+    repo = tmp_path / "BioMiner"
+    (repo / "BioMiner" / "config").mkdir(parents=True)
+    (repo / "example_open_source.py").write_text(SLOW_BIOMINER)
+    (repo / "BioMiner" / "config" / "molcensus_paid.yaml").write_text("molcensus_tier: paid\nmodel:\n  text_mllm_type: gemini-x\n")
+    (tmp_path / "1.pdf").write_bytes(b"%PDF-1.4")
+    settings = {"repo_dir": str(repo), "python_executable": sys.executable, "config_path": "unused.yaml", "tier": "paid"}
+
+    run_biominer({1: tmp_path / "1.pdf"}, settings, tmp_path / "out")
+
+    info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
+    assert info["config_path"] == "BioMiner/config/molcensus_paid.yaml" and info["tier"] == "paid"

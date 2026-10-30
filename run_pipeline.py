@@ -136,6 +136,8 @@ def main() -> None:
                 elif tool == "biominer":
                     from molcensus.recognizers.biominer_runner import run_biominer
 
+                    # A config's course_tier (configs/aws.yaml) picks the Gemini key unless the block sets its own tier.
+                    settings = {**settings, "tier": settings.get("tier") or config.get("course_tier")}
                     outputs = run_biominer(pdfs, settings, work_dir / "biominer_output", force=args.force)
                 else:
                     log.warning("No runner for recognizer '%s'; skipping", tool)

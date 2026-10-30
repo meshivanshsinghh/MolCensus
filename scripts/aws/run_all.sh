@@ -3,9 +3,10 @@ sudo shutdown -h +600  # hard stop after 10 hours whatever happens below (cancel
 # Every GPU stage, in order. Start it inside tmux after setup.sh (see scripts/aws/README.md):
 #   bash ~/molcensus/scripts/aws/run_all.sh 2>&1 | tee -a ~/runs/run_all.log
 #
-# Order: a. crop readers on the course crops; BioMiner servers and smoke test (free key);
-# d. BioMiner on the course papers (paid key); servers stopped; b. crop readers on the public sets;
-# c. BioMiner on BioVista papers (free key); servers stopped; e. MolRecBench-Wild.
+# Order: a. crop readers on the course crops; BioMiner servers and smoke test; d. BioMiner on the
+# course papers; servers stopped; b. crop readers on the public sets; c. BioMiner on BioVista papers
+# (free key); servers stopped; e. MolRecBench-Wild. The smoke test and stage d use the Gemini key
+# tier set by course_tier in configs/aws.yaml, so the smoke test checks the key stage d will use.
 #
 # Each stage writes ~/runs/<stage>.log and, if it succeeds, ~/runs/<stage>.done. A done stage is
 # skipped on a rerun (delete its .done file to redo it). A stage whose data is missing is skipped. A
@@ -28,6 +29,8 @@ mkdir -p "$RUNS"
 cd "$MOLCENSUS" || exit 1
 export NO_ALBUMENTATIONS_UPDATE=1
 export HF_HUB_DOWNLOAD_TIMEOUT=180  # stage b downloads the public sets from Hugging Face
+COURSE_TIER=$("$PY" -c "import yaml; print(yaml.safe_load(open('configs/aws.yaml')).get('course_tier', ''))" 2> /dev/null)
+COURSE_CONFIG=BioMiner/config/molcensus_${COURSE_TIER}.yaml  # written by biominer_gemini.py in setup.sh
 
 stage() {  # stage <name> <estimate> <function>
   local name=$1 estimate=$2 fn=$3 started=$SECONDS code
@@ -112,23 +115,23 @@ EOF
   for tool in ${READERS//,/ }; do [ -s "results/aws/predictions/${tool}_predictions.csv" ] || { echo "no $tool predictions"; return 1; }; done
 }
 
-# BioMiner servers, then a smoke test on BioMiner's own example (free key), limit 45 minutes.
+# BioMiner servers, then a smoke test on BioMiner's own example with the course-tier key, limit 45 minutes.
 biominer_smoke() {
-  [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
+  [ -f "$BIOMINER/$COURSE_CONFIG" ] || { echo "no $COURSE_CONFIG: no key for course_tier '$COURSE_TIER'"; return $SKIP; }
   start_servers || return 1
   limited 45m bash -c "cd '$BIOMINER' && PYTHONPATH=./ '$BIOMINER_PY' example_open_source.py \
-    --config_path=BioMiner/config/molcensus_free.yaml --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
+    --config_path=$COURSE_CONFIG --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
     || { local code=$?; echo "smoke test did not finish (exit $code)"; return $code; }
   find "$RUNS/biominer_smoke" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
-  echo "smoke test passed; MLLM calls lost after all retries: $(grep -c ' try failed:' "$RUNS/biominer_smoke.log")"
+  echo "smoke test passed with the $COURSE_TIER key; MLLM calls lost after all retries: $(grep -c ' try failed:' "$RUNS/biominer_smoke.log")"
 }
 
-# d. BioMiner on the six course PDFs (paid key, gemini-3.5-flash), only with the permission file, limit 2 hours.
+# d. BioMiner on the six course PDFs (course-tier key, gemini-3.5-flash), only with the permission file, limit 2 hours.
 biominer_course() {
   [ -e "$RUNS/biominer_smoke.done" ] || { echo "the BioMiner smoke test has not passed"; return $SKIP; }
   [ -f "$PERMISSION_FLAG" ] || { echo "no permission flag $PERMISSION_FLAG"; return $SKIP; }
   ls data/pdfs/*.pdf > /dev/null 2>&1 || { echo "no course PDFs in data/pdfs"; return $SKIP; }
-  [ -f "$BIOMINER/BioMiner/config/molcensus_paid.yaml" ] || { echo "no molcensus_paid.yaml: no paid Gemini key"; return $SKIP; }
+  [ -f "$BIOMINER/$COURSE_CONFIG" ] || { echo "no $COURSE_CONFIG: no key for course_tier '$COURSE_TIER'"; return $SKIP; }
   echo "Permission record ($PERMISSION_FLAG):"; cat "$PERMISSION_FLAG"; echo
   start_servers || return 1
   limited 2h "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools biominer || return $?
@@ -180,8 +183,8 @@ n_biovista=$(( $(ls data/biovista/pdfs/*.pdf 2>/dev/null | grep -v -e '/40_6s8a.
 echo "run_all.sh started $(date); instance stops at the latest 10 hours from now"
 echo "Plan (estimates, not measured on this GPU; limits in brackets):"
 echo "  a. course_readers     237 crops x 3 readers                                         about 10 min"
-echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf (free key)  15 to 45 min [45 min]"
-echo "  d. biominer_course    6 course papers (paid key), only with $PERMISSION_FLAG        20 to 60 min [2 h]"
+echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf ($COURSE_TIER key)  15 to 45 min [45 min]"
+echo "  d. biominer_course    6 course papers ($COURSE_TIER key), only with $PERMISSION_FLAG        20 to 60 min [2 h]"
 echo "     (servers stopped)"
 echo "  b. public_readers     21,643 images (USPTO, UOB, CLEF, ACS, BioVista) x 3 readers    1.5 to 3.5 h"
 echo "  c. biominer_biovista  $n_biovista BioVista papers (free key) at 3 to 10 min each          $(( 3 * n_biovista )) to $(( 10 * n_biovista )) min [3 h]"

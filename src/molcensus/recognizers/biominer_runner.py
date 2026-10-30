@@ -75,6 +75,13 @@ def _mllm_settings(config_file: Path) -> dict:
     }
 
 
+def _config_path(settings: dict) -> str:
+    """BioMiner config to use: molcensus_<tier>.yaml (written by scripts/aws/biominer_gemini.py) when a
+    key tier is set, else config_path."""
+    tier = settings.get("tier")
+    return f"BioMiner/config/molcensus_{tier}.yaml" if tier else settings["config_path"]
+
+
 def _read_tables(paper_output: Path, pattern: str) -> list[pd.DataFrame]:
     """Read every table that matches the pattern. A file that cannot be read is logged and skipped."""
     tables = []
@@ -188,9 +195,10 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path, force
     python_exe = expand(str(settings.get("python_executable", ""))) or "python"
 
     environment = {**os.environ, "PYTHONPATH": str(repo_dir)}
-    models = _mllm_settings(repo_dir / settings["config_path"])
+    config_path = _config_path(settings)
+    models = _mllm_settings(repo_dir / config_path)
     log.info("BioMiner models: text %s, vision %s, key tier %s (config %s)",
-             models["text_model"], models["vision_model"], models["tier"], settings["config_path"])
+             models["text_model"], models["vision_model"], models["tier"], config_path)
     records = {tool: [] for tool, _ in OUTPUT_TABLES}
     previous_handler = signal.signal(signal.SIGTERM, _stop)
     paper_id = None
@@ -208,7 +216,7 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path, force
             paper_output.mkdir(parents=True)
             command = [
                 python_exe, "example_open_source.py",
-                f"--config_path={settings['config_path']}",
+                f"--config_path={config_path}",
                 f"--pdf={pdf_path}",
                 f"--output_dir={paper_output}",
                 *shlex.split(expand(str(settings.get("extra_args", "")))),  # e.g. --biovista_evaluate
@@ -243,7 +251,7 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path, force
 
             n_rows = _collect(records, paper_output, name, paper_id, runtime, error)
             run_info = {
-                "paper_id": paper_id, **models, "config_path": str(settings["config_path"]), "error": error,
+                "paper_id": paper_id, **models, "config_path": config_path, "error": error,
                 "api_failures": api_failures, **tokens, "runtime_s": round(runtime, 1), "n_predictions": n_rows,
             }
             (paper_output / "run_info.json").write_text(json.dumps(run_info, indent=2))  # marks the paper finished

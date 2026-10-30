@@ -156,7 +156,8 @@ One run is created in the `molcensus` project (`--wandb-project` and `--wandb-en
    its Gemini prompts for any model name without "gpt".
 3. Start its MinerU, MolDet and OCSR servers.
 4. Copy `.env.example` to `.env` and set `BIOMINER_DIR` and `BIOMINER_PYTHON`.
-5. Set `recognizers.biominer.enabled: true` and `config_path` to one of those configs.
+5. Set `recognizers.biominer.enabled: true` and `tier: free` or `tier: paid` (that picks
+   `molcensus_<tier>.yaml`; `configs/aws.yaml` sets it for the course papers with `course_tier`).
 
 Each paper's output folder gets `run_info.json` with the model names, the key tier, the number of
 MLLM calls lost after all retries, and the input, output and total tokens of the answered calls.

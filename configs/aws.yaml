@@ -3,6 +3,11 @@
 # instance only predicts. Score on the Mac with configs/aws_score.yaml.
 extends: default.yaml
 
+# Gemini key tier for the course papers: paid or free. Stage d and the smoke test before it both use
+# BioMiner/config/molcensus_<tier>.yaml, so the smoke test checks the key stage d will use. If you
+# switch to free, also change the Scope line in ~/COURSE_PDFS_PERMISSION_GIVEN to match.
+course_tier: paid
+
 paths:
   ground_truth_csv: scripts/aws/placeholder_ground_truth.csv
   results_dir: results/aws          # kept apart from the committed Mac results
@@ -14,9 +19,7 @@ recognizers:
     device: cuda
   molglyph:
     device: cuda
-  biominer:
-    config_path: BioMiner/config/molcensus_paid.yaml    # paid Gemini key, gemini-3.5-flash: course papers,
-                                                        # only with run_all.sh's permission flag
+  biominer: {}                      # its config comes from course_tier above; stage d needs the permission flag
 
 public_check:
   datasets: [uspto, uob, clef, acs, biovista]
