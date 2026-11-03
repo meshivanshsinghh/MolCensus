@@ -115,15 +115,28 @@ EOF
   for tool in ${READERS//,/ }; do [ -s "results/aws/predictions/${tool}_predictions.csv" ] || { echo "no $tool predictions"; return 1; }; done
 }
 
+smoke_check() {  # smoke_check <BioMiner output folder> <BioMiner output log>
+  # Passes only with a structure table and at most 2 MLLM calls lost after all retries. A refused or
+  # exhausted key loses every call, and stage d's results would then be kept by the rerun rule.
+  local lost
+  find "$1" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
+  lost=$(grep -c ' try failed:' "$2")
+  [ "$lost" -le 2 ] || { echo "smoke test FAILED: $lost MLLM calls lost after all retries (more than 2); check the key and its quota"; return 1; }
+  echo "smoke test passed with the $COURSE_TIER key; MLLM calls lost after all retries: $lost"
+}
+
 # BioMiner servers, then a smoke test on BioMiner's own example with the course-tier key, limit 45 minutes.
 biominer_smoke() {
   [ -f "$BIOMINER/$COURSE_CONFIG" ] || { echo "no $COURSE_CONFIG: no key for course_tier '$COURSE_TIER'"; return $SKIP; }
   start_servers || return 1
+  # Start empty: BioMiner reuses MLLM answers it finds in its output folder, so a rerun would otherwise
+  # reuse the empty answers of a refused key without calling Gemini again.
+  rm -rf "$RUNS/biominer_smoke"
   limited 45m bash -c "cd '$BIOMINER' && PYTHONPATH=./ '$BIOMINER_PY' example_open_source.py \
     --config_path=$COURSE_CONFIG --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
-    || { local code=$?; echo "smoke test did not finish (exit $code)"; return $code; }
-  find "$RUNS/biominer_smoke" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
-  echo "smoke test passed with the $COURSE_TIER key; MLLM calls lost after all retries: $(grep -c ' try failed:' "$RUNS/biominer_smoke.log")"
+    > "$RUNS/biominer_smoke_output.log" 2>&1 \
+    || { local code=$?; echo "smoke test did not finish (exit $code); see $RUNS/biominer_smoke_output.log"; return $code; }
+  smoke_check "$RUNS/biominer_smoke" "$RUNS/biominer_smoke_output.log"
 }
 
 # d. BioMiner on the six course PDFs (course-tier key, gemini-3.5-flash), only with the permission file, limit 2 hours.

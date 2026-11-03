@@ -179,3 +179,29 @@ def test_biominer_tier_picks_its_config(tmp_path):
 
     info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
     assert info["config_path"] == "BioMiner/config/molcensus_paid.yaml" and info["tier"] == "paid"
+
+
+def test_smoke_gate_fails_when_more_than_two_calls_are_lost(tmp_path):
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("bash") is None:
+        pytest.skip("needs bash")
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "aws" / "run_all.sh").read_text()
+    start = script.index("smoke_check() {")
+    function = script[start:script.index("\n}\n", start) + 3]  # the real function, not a copy
+    out = tmp_path / "biominer_smoke" / "extraction_gemini-3.5-flash" / "68_6r8r"
+    out.mkdir(parents=True)
+    (out / "68_6r8r_structure_merged_output_a_b.csv").write_text("ligand,smiles\n1,CCO\n")
+
+    def gate(lost_calls):
+        log = tmp_path / "smoke_output.log"
+        log.write_text("".join(f"gemini-3.5-flash {i} try failed: Error code: 403\n" for i in range(lost_calls)) + "done\n")
+        return subprocess.run(["bash", "-c", f'{function}\nCOURSE_TIER=paid\nsmoke_check "$1" "$2"', "gate",
+                               str(tmp_path / "biominer_smoke"), str(log)], capture_output=True, text=True)
+
+    passed, failed = gate(0), gate(3)
+    assert passed.returncode == 0 and "passed" in passed.stdout
+    assert failed.returncode == 1 and "FAILED: 3 MLLM calls lost" in failed.stdout

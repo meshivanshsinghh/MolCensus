@@ -62,6 +62,9 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 ## Launch
 
+These commands are written for bash. In zsh (the macOS default), `$SSH` does not split into `ssh`
+and its options, so type `bash` first in that terminal tab.
+
 g6.2xlarge (L4) or g5.2xlarge (A10G); both have 24 GB of GPU memory. In us-east-1 they cost about
 $0.98 and $1.21 per hour on demand; check the current us-east-2 prices.
 `--instance-initiated-shutdown-behavior stop` matters: `run_all.sh` ends with `shutdown`, and with
@@ -108,6 +111,9 @@ from a new terminal"). If `run-instances` fails with
 in another zone (list them: `aws ec2 describe-subnets --region $REGION --query 'Subnets[].[SubnetId,AvailabilityZone]' --output text`).
 
 ### Reconnect from a new terminal
+
+These commands are written for bash. In zsh (the macOS default), `$SSH` does not split into `ssh`
+and its options, so type `bash` first in that terminal tab.
 
 ```bash
 aws login                     # the sign-in lasts at most 12 hours
@@ -173,15 +179,17 @@ $SSH $HOST 'grep -E "biominer_smoke|biominer_course" runs/run_all.log; tail -n 1
 $SSH $HOST 'grep "BioMiner: paper" runs/biominer_course.log | head -n 3'
 ```
 
-You want `[biominer_smoke] done after N min`, a last smoke-log line `smoke test passed; MLLM calls
-lost after all retries: 0` (or a small number), then `[biominer_course] started` and
-`BioMiner: paper 1` in stage d's log. If the smoke test fails, stages d and c are skipped.
+You want `[biominer_smoke] done after N min`, a last smoke-log line `smoke test passed with the paid
+key; MLLM calls lost after all retries: 0` (at most 2 is allowed), then `[biominer_course] started`
+and `BioMiner: paper 1` in stage d's log. If the smoke test fails (for example because more than 2
+calls were lost, as with a refused key), stages d and c are skipped; BioMiner's own output is in
+`runs/biominer_smoke_output.log`.
 
 | Order | Stage | What | Needs | Estimate | Time limit |
 |---|---|---|---|---|---|
 | 1 | a. course_readers | MolScribe, MolSight, MolGlyph on the 237 course crops | crops copied up | about 10 min | none |
-| 2 | biominer_smoke | start the BioMiner servers, then BioMiner on `example/pdfs/68_6r8r.pdf` | free key | 15 to 45 min | 45 min |
-| 3 | d. biominer_course | BioMiner on the six course PDFs | smoke test passed, paid key, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min | 2 h |
+| 2 | biominer_smoke | start the BioMiner servers, then BioMiner on `example/pdfs/68_6r8r.pdf`; fails if more than 2 MLLM calls are lost | `course_tier` key (paid) | 15 to 45 min | 45 min |
+| 3 | d. biominer_course | BioMiner on the six course PDFs | smoke test passed, `course_tier` key (paid), PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min | 2 h |
 | | | servers stopped, GPU memory checked free | | | |
 | 4 | b. public_readers | the three readers on all of USPTO, UOB, CLEF, ACS and BioVista OCSR (21,643 images), scored on the instance | downloads itself | 1.5 to 3.5 h | none |
 | 5 | c. biominer_biovista | BioMiner on every BioVista PDF | smoke test passed, free key | 3 to 10 min per paper | 3 h |
