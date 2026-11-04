@@ -28,6 +28,7 @@ BIOMINER=$HOME/BioMiner
 BIOMINER_PY=$HOME/miniconda3/envs/BioMiner/bin/python
 PY=$MOLCENSUS/.venv/bin/python
 RUNS=$HOME/runs
+RUN_STAMP=$(date -u +%Y%m%dT%H%M%SZ)  # this run's folder in the S3 bucket (upload_results.sh)
 PERMISSION_FLAG=$HOME/COURSE_PDFS_PERMISSION_GIVEN  # who approved sending the course PDFs to Gemini; copied up from the Mac
 READERS=molscribe,molsight,molglyph
 SERVERS='scripts/(mineru|moldet|ocsr)_server.py'
@@ -207,7 +208,8 @@ molrecbench_wild() {
 }
 
 n_biovista=$(( $(ls data/biovista/pdfs/*.pdf 2>/dev/null | grep -v -e '/40_6s8a.pdf' -e '/68_6r8r.pdf' | wc -l) + 2 ))
-echo "run_all.sh started $(date); the instance stops 8 hours after the last stage, or 10 hours from now if run_all.sh has not finished by then"
+echo "run_all.sh started $(date). After the last stage the results go to S3 (folder $RUN_STAMP) and the instance"
+echo "stops; if the upload fails it stops 8 hours later, and if run_all.sh hangs, 10 hours from now"
 echo "Plan (estimates, not measured on this GPU; limits in brackets):"
 echo "  a. course_readers     237 crops x 3 readers                                         about 10 min"
 echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf ($COURSE_TIER key)  15 to 45 min [45 min]"
@@ -227,9 +229,17 @@ stage biominer_biovista "$(( 3 * n_biovista )) to $(( 10 * n_biovista )) min, li
 stop_servers  # stage e runs the crop readers on the GPU
 stage molrecbench_wild "20 to 50 min" molrecbench_wild
 
-# Stay up 8 more hours so the results can be copied back: GPUs are scarce, and a stopped instance may
-# not start again. This replaces the 10-hour stop set at the top.
+# Upload the results to S3 and stop at once if every file arrived. If not, stay up 8 more hours so
+# the results can be copied back by hand: GPUs are scarce, and a stopped instance may not start again.
+# The 8-hour stop is set first (it replaces the 10-hour one), so it also holds if the upload hangs.
 sudo shutdown -c
 sudo shutdown -h +480
-echo "run_all.sh finished $(date). Outputs: results/aws*, outputs/work*/biominer_output."
-echo "The instance stops at $(date -d '+480 min') (8 hours from now; cancel with: sudo shutdown -c)."
+STOP_AT=$(date -d '+480 min')
+echo "run_all.sh finished $(date). Outputs: results/aws*, outputs/work*/biominer_output. Uploading to S3."
+if bash "$MOLCENSUS/scripts/aws/upload_results.sh" "$RUN_STAMP"; then
+  echo "$(tail -n 1 "$RUNS/upload.log"). Stopping the instance now."
+  sudo shutdown -h now
+else
+  echo "$(tail -n 1 "$RUNS/upload.log") (more in $RUNS/upload.log)"
+  echo "The instance stops at $STOP_AT (8 hours after the last stage; cancel with: sudo shutdown -c)."
+fi

@@ -9,7 +9,8 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 | File | What it does |
 |---|---|
 | `setup.sh` | Installs everything on a fresh instance. Safe to rerun. Log: `~/setup.log` |
-| `run_all.sh` | Runs the stages in order, then stops the instance 8 hours later. Logs: `~/runs/` |
+| `run_all.sh` | Runs the stages in order, uploads the results to S3, then stops the instance. Logs: `~/runs/` |
+| `upload_results.sh` | The upload and its file-count check (called by run_all.sh). Log: `~/runs/upload.log` |
 | `patch_biominer.py` | Local BioMiner edits: one GPU, retries for failed MLLM calls, token counts (called by setup.sh) |
 | `biominer_gemini.py` | Writes BioMiner's two Gemini configs (free key, paid key) and tests both keys (called by setup.sh) |
 | `../../configs/aws*.yaml` | Instance configs; `aws_score.yaml` is for scoring on the Mac |
@@ -88,7 +89,28 @@ if ! aws ec2 describe-security-groups --region $REGION --filters Name=group-name
 fi
 ```
 
-Each launch:
+One time: the results bucket and the instance role. `run_all.sh` uploads to the private bucket
+`molcensus-results-<account id>` in us-east-2. The role `molcensus-ec2`, given to the instance through
+the instance profile of the same name, may only list, read and write that bucket. These were made on
+2026-11-04; run again, the create calls fail with "already exists", which does no harm.
+
+```bash
+REGION=us-east-2
+BUCKET=molcensus-results-$(aws sts get-caller-identity --query Account --output text)
+aws s3api create-bucket --region $REGION --bucket $BUCKET --create-bucket-configuration LocationConstraint=$REGION
+aws s3api put-public-access-block --region $REGION --bucket $BUCKET --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+aws iam create-role --role-name molcensus-ec2 --assume-role-policy-document \
+  '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+aws iam put-role-policy --role-name molcensus-ec2 --policy-name molcensus-results-bucket --policy-document '{"Version":"2012-10-17","Statement":[
+  {"Effect":"Allow","Action":"s3:ListBucket","Resource":"arn:aws:s3:::'$BUCKET'"},
+  {"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload"],"Resource":"arn:aws:s3:::'$BUCKET'/*"}]}'
+aws iam create-instance-profile --instance-profile-name molcensus-ec2
+aws iam add-role-to-instance-profile --instance-profile-name molcensus-ec2 --role-name molcensus-ec2
+```
+
+Each launch (`--iam-instance-profile` gives the instance the role; for a running instance use
+`aws ec2 associate-iam-instance-profile --region $REGION --instance-id $ID --iam-instance-profile Name=molcensus-ec2`):
 
 ```bash
 REGION=us-east-2
@@ -97,6 +119,7 @@ AMI=$(aws ssm get-parameter --region $REGION --query Parameter.Value --output te
   --name /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id)
 ID=$(aws ec2 run-instances --region $REGION --image-id $AMI --instance-type g6.2xlarge \
   --key-name molcensus --security-group-ids $SG --instance-initiated-shutdown-behavior stop \
+  --iam-instance-profile Name=molcensus-ec2 \
   --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=150,VolumeType=gp3}' \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=molcensus}]' \
   --query 'Instances[0].InstanceId' --output text)
@@ -205,11 +228,13 @@ The estimates are extrapolated from Mac CPU timings, not measured on a GPU. A st
 time limit stops cleanly: the papers it finished keep their output and `run_info.json`, no done-marker
 is written, and rerunning `run_all.sh` continues with the unfinished papers. A crop-reader stage
 fails if a reader returned no SMILES at all, which is what an environment problem looks like (every
-crop gets an error). After the last stage the instance stays up 8 more hours, so the results can be
-copied back without starting it again (GPUs are scarce, and a stopped instance may not start). The
-last line of `runs/run_all.log` gives the stop time. If `run_all.sh` hangs, the instance stops 10
-hours after the start. `sudo shutdown -c` cancels either stop. If every stage runs to its limit or
-upper estimate, stage e may not fit.
+crop gets an error). After the last stage `run_all.sh` uploads the results to S3 (see "Copy back
+from S3"). If every file arrived, the instance stops at once. If not, it stays up 8 more hours, so the
+results can be copied back by hand without starting it again (GPUs are scarce, and a stopped
+instance may not start). `runs/upload.log` says why, and the last line of `runs/run_all.log` gives
+the stop time. If `run_all.sh` hangs, the instance stops 10 hours after the start.
+`sudo shutdown -c` cancels any of these stops. If every stage runs to its limit or upper estimate,
+stage e may not fit.
 Stage c copies `data/biovista/labels/` to `BioVista/bioactivity_extraction/labels/` and
 `data/biovista/structure_annotation/` to `BioVista/structure_annotation/` inside the BioMiner clone,
 then adds `--biovista_evaluate`. If either folder is missing it runs without that flag. Where the two
@@ -233,9 +258,47 @@ added up), plus `total_tokens`. If `total_tokens` is larger than the two togethe
 likely the model's thinking tokens; check Google's pricing for how they are billed. The values are
 `null` when no call was answered.
 
+## Copy back from S3
+
+After the last stage, `upload_results.sh` puts each run in its own folder,
+`s3://molcensus-results-<account id>/<run start, UTC>/`, for example `20261104T014907Z`. Inside it are
+the same folders as on the Mac after "Copy back": `results/aws*/`, `outputs/work/biominer_output/`,
+`outputs/work_biovista/biominer_output/`, `runs/` and `setup.log`. It leaves out PDFs, because MinerU
+keeps a copy of every paper BioMiner reads, the course PDFs among them. It also leaves out
+`runs/upload.log`, which is still being written. After the upload it counts the files in the
+bucket. Only if the count matches what it sent does it write `UPLOAD_COMPLETE` (file count and time)
+there and stop the instance. Without `UPLOAD_COMPLETE` the upload is incomplete; use "Copy back" below.
+
+```bash
+cd ~/Professional/MolCensus
+export AWS_DEFAULT_REGION=us-east-2
+BUCKET=molcensus-results-$(aws sts get-caller-identity --query Account --output text)
+aws s3 ls s3://$BUCKET/                          # one folder per run
+RUN=20261104T014907Z                             # the run to fetch
+aws s3 cp s3://$BUCKET/$RUN/UPLOAD_COMPLETE -    # "<n> files, checked <time>"; an error means the upload is incomplete
+aws s3 sync s3://$BUCKET/$RUN/results/ results/  # results/aws, aws_biovista, aws_molrecbench
+aws s3 sync s3://$BUCKET/$RUN/outputs/work/biominer_output/ outputs/work/biominer_output/
+aws s3 sync s3://$BUCKET/$RUN/outputs/work_biovista/biominer_output/ outputs/work_biovista/biominer_output/
+aws s3 sync s3://$BUCKET/$RUN/runs/ outputs/aws_logs/runs/
+aws s3 cp s3://$BUCKET/$RUN/setup.log outputs/aws_logs/
+```
+
+A folder a run did not write is not in the bucket; its sync then copies nothing.
+
+After the project, once "Clean up" below has terminated the instance, delete the bucket with
+everything in it, then the role:
+
+```bash
+aws s3 rb s3://$BUCKET --force                   # deletes every run's results, then the bucket
+aws iam remove-role-from-instance-profile --instance-profile-name molcensus-ec2 --role-name molcensus-ec2
+aws iam delete-instance-profile --instance-profile-name molcensus-ec2
+aws iam delete-role-policy --role-name molcensus-ec2 --policy-name molcensus-results-bucket
+aws iam delete-role --role-name molcensus-ec2
+```
+
 ## Copy back
 
-If the instance has stopped, start it first:
+From the instance itself, if the upload failed. If the instance has stopped, start it first:
 `aws ec2 start-instances --region $REGION --instance-ids $ID && aws ec2 wait instance-status-ok --region $REGION --instance-ids $ID`,
 then rerun the `HOST=` line.
 
