@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-sudo shutdown -h +600  # hard stop after 10 hours whatever happens below (cancel with: sudo shutdown -c)
+sudo shutdown -h +600  # hard stop after 10 hours if the run hangs; the end of the script replaces it (cancel with: sudo shutdown -c)
 # Every GPU stage, in order. Start it inside tmux after setup.sh (see scripts/aws/README.md):
 #   bash ~/molcensus/scripts/aws/run_all.sh 2>&1 | tee -a ~/runs/run_all.log
 #
@@ -15,6 +15,14 @@ sudo shutdown -h +600  # hard stop after 10 hours whatever happens below (cancel
 # continues with the unfinished papers. The time estimates assume one A10G or L4 GPU; they are
 # extrapolated from the Mac CPU timings, not measured on a GPU.
 set -u
+# The Deep Learning AMI puts its own cuDNN (/usr/local/cuda-13.2/lib) on LD_LIBRARY_PATH
+# (/etc/profile.d/dlami.sh). The pip torch in .venv and molsight-env then loads part of cuDNN from
+# there and part from its own copy, and every convolution fails with
+# CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH: on 2026-11-03 MolScribe and MolSight scored 0 that way.
+# So the stages run without it. Only the BioMiner servers get it back: MinerU's paddle has only
+# been run with it.
+AMI_LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
+unset LD_LIBRARY_PATH
 MOLCENSUS=$(cd "$(dirname "$0")/../.." && pwd)
 BIOMINER=$HOME/BioMiner
 BIOMINER_PY=$HOME/miniconda3/envs/BioMiner/bin/python
@@ -56,6 +64,10 @@ limited() {  # limited <duration> <command...>
   return "$code"
 }
 
+has_smiles() {  # has_smiles <predictions.csv>: at least one SMILES. A reader that fails on every crop still writes a row per crop.
+  "$PY" -c "import sys, pandas as pd; sys.exit(0 if pd.read_csv(sys.argv[1])['pred_smiles'].notna().any() else 1)" "$1" 2> /dev/null
+}
+
 server_up() {  # 200 from /health, or 404 if this litserve version has no /health route but is listening
   local code
   code=$(curl -s -o /dev/null -w '%{http_code}' "localhost:$1/health")
@@ -68,7 +80,7 @@ start_servers() {  # BioMiner's MinerU (8002), MolDetV2 (8001) and MolGlyph OCSR
     name=${entry%:*}; port=${entry#*:}
     # setsid: each server leads its own process group, so a stage's time limit never kills it by
     # accident and stop_servers can stop it together with its worker processes.
-    server_up "$port" || (cd "$BIOMINER" && PYTHONPATH=./ setsid nohup "$BIOMINER_PY" "scripts/${name}_server.py" \
+    server_up "$port" || (cd "$BIOMINER" && PYTHONPATH=./ LD_LIBRARY_PATH=$AMI_LD_LIBRARY_PATH setsid nohup "$BIOMINER_PY" "scripts/${name}_server.py" \
       > "$RUNS/server_$name.log" 2>&1 < /dev/null &)
   done
   for entry in mineru:8002 moldet:8001 ocsr:8003; do
@@ -112,7 +124,7 @@ print(f"{len(crops)} crops, {missing} missing after rewriting paths")
 raise SystemExit(1 if missing else 0)
 EOF
   "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools "$READERS"
-  for tool in ${READERS//,/ }; do [ -s "results/aws/predictions/${tool}_predictions.csv" ] || { echo "no $tool predictions"; return 1; }; done
+  for tool in ${READERS//,/ }; do has_smiles "results/aws/predictions/${tool}_predictions.csv" || { echo "no $tool SMILES"; return 1; }; done
 }
 
 smoke_check() {  # smoke_check <BioMiner output folder> <BioMiner output log>
@@ -155,6 +167,7 @@ biominer_course() {
 public_readers() {
   "$PY" run_pipeline.py --config configs/aws.yaml --steps public --tools "$READERS"
   [ -s results/aws/public/public_metrics.csv ] || { echo "no public_metrics.csv"; return 1; }
+  for tool in ${READERS//,/ }; do has_smiles "results/aws/public/${tool}_predictions.csv" || { echo "no $tool SMILES"; return 1; }; done
 }
 
 # c. BioMiner on BioVista papers (free key), limit 3 hours.
@@ -190,10 +203,11 @@ molrecbench_wild() {
   [ -f data/public/molrecbench_wild/molrecbench_wild.csv ] || { echo "no data/public/molrecbench_wild/molrecbench_wild.csv"; return $SKIP; }
   "$PY" run_pipeline.py --config configs/aws_molrecbench.yaml --steps public --tools "$READERS"
   [ -s results/aws_molrecbench/public/public_metrics.csv ] || { echo "no public_metrics.csv"; return 1; }
+  for tool in ${READERS//,/ }; do has_smiles "results/aws_molrecbench/public/${tool}_predictions.csv" || { echo "no $tool SMILES"; return 1; }; done
 }
 
 n_biovista=$(( $(ls data/biovista/pdfs/*.pdf 2>/dev/null | grep -v -e '/40_6s8a.pdf' -e '/68_6r8r.pdf' | wc -l) + 2 ))
-echo "run_all.sh started $(date); instance stops at the latest 10 hours from now"
+echo "run_all.sh started $(date); the instance stops 8 hours after the last stage, or 10 hours from now if run_all.sh has not finished by then"
 echo "Plan (estimates, not measured on this GPU; limits in brackets):"
 echo "  a. course_readers     237 crops x 3 readers                                         about 10 min"
 echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf ($COURSE_TIER key)  15 to 45 min [45 min]"
@@ -213,5 +227,9 @@ stage biominer_biovista "$(( 3 * n_biovista )) to $(( 10 * n_biovista )) min, li
 stop_servers  # stage e runs the crop readers on the GPU
 stage molrecbench_wild "20 to 50 min" molrecbench_wild
 
-echo "run_all.sh finished $(date). Outputs: results/aws*, outputs/work*/biominer_output. Stopping the instance."
-sudo shutdown -h now
+# Stay up 8 more hours so the results can be copied back: GPUs are scarce, and a stopped instance may
+# not start again. This replaces the 10-hour stop set at the top.
+sudo shutdown -c
+sudo shutdown -h +480
+echo "run_all.sh finished $(date). Outputs: results/aws*, outputs/work*/biominer_output."
+echo "The instance stops at $(date -d '+480 min') (8 hours from now; cancel with: sudo shutdown -c)."

@@ -9,7 +9,7 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 | File | What it does |
 |---|---|
 | `setup.sh` | Installs everything on a fresh instance. Safe to rerun. Log: `~/setup.log` |
-| `run_all.sh` | Runs the stages in order, then stops the instance. Logs: `~/runs/` |
+| `run_all.sh` | Runs the stages in order, then stops the instance 8 hours later. Logs: `~/runs/` |
 | `patch_biominer.py` | Local BioMiner edits: one GPU, retries for failed MLLM calls, token counts (called by setup.sh) |
 | `biominer_gemini.py` | Writes BioMiner's two Gemini configs (free key, paid key) and tests both keys (called by setup.sh) |
 | `../../configs/aws*.yaml` | Instance configs; `aws_score.yaml` is for scoring on the Mac |
@@ -161,10 +161,15 @@ $SSH -t $HOST "tmux new -s setup 'bash molcensus/scripts/aws/setup.sh; bash'"
 ```
 
 It ends with `=== setup.sh finished`. If it stops, fix the cause and run the same command again;
-finished steps are skipped. If `torch CUDA` fails, the AMI's NVIDIA driver is older than the CUDA
+finished steps are skipped. `torch CUDA` runs one convolution on the GPU in `.venv` and in
+`molsight-env`, without the AMI's `LD_LIBRARY_PATH`, as `run_all.sh` runs the readers. With that path
+set, the AMI's own cuDNN mixes with the one torch ships, and every convolution fails with
+`CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH` (MolScribe and MolSight scored 0 on 2026-11-03).
+If `torch CUDA` fails for another reason, the AMI's NVIDIA driver may be older than the CUDA
 build of torch from PyPI: install torch from `https://download.pytorch.org/whl/cu126` into
 `molcensus/.venv` and rerun. A failed Gemini check only warns, because the crop-reader stages do not
-need Gemini.
+need Gemini. The MinerU smoke test passes only if `magic-pdf` wrote a `.md` file, because it can
+exit 0 after a traceback.
 
 ## Run (in tmux, so it survives a dropped connection)
 
@@ -198,9 +203,13 @@ calls were lost, as with a refused key), stages d and c are skipped; BioMiner's 
 
 The estimates are extrapolated from Mac CPU timings, not measured on a GPU. A stage that reaches its
 time limit stops cleanly: the papers it finished keep their output and `run_info.json`, no done-marker
-is written, and rerunning `run_all.sh` continues with the unfinished papers. The instance stops itself
-after the last stage, or after 10 hours at the latest (`sudo shutdown -c` cancels that); if every stage
-runs to its limit or upper estimate, stage e may not fit.
+is written, and rerunning `run_all.sh` continues with the unfinished papers. A crop-reader stage
+fails if a reader returned no SMILES at all, which is what an environment problem looks like (every
+crop gets an error). After the last stage the instance stays up 8 more hours, so the results can be
+copied back without starting it again (GPUs are scarce, and a stopped instance may not start). The
+last line of `runs/run_all.log` gives the stop time. If `run_all.sh` hangs, the instance stops 10
+hours after the start. `sudo shutdown -c` cancels either stop. If every stage runs to its limit or
+upper estimate, stage e may not fit.
 Stage c copies `data/biovista/labels/` to `BioVista/bioactivity_extraction/labels/` and
 `data/biovista/structure_annotation/` to `BioVista/structure_annotation/` inside the BioMiner clone,
 then adds `--biovista_evaluate`. If either folder is missing it runs without that flag. Where the two

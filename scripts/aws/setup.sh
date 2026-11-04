@@ -26,6 +26,11 @@ export PATH=$HOME/.local/bin:$CONDA/bin:$PATH
 
 step() { echo; echo "--- $(date +%T) $*"; }
 fail() { echo "SETUP FAILED: $*"; exit 1; }
+gpu_check() {  # gpu_check <python>: one convolution on the GPU, without the AMI's LD_LIBRARY_PATH, as run_all.sh runs it
+  # torch.cuda.is_available() alone passed on 2026-11-03 while every convolution failed (see run_all.sh).
+  env -u LD_LIBRARY_PATH "$1" -c "import torch; torch.nn.Conv2d(3, 8, 3).cuda()(torch.zeros(1, 3, 32, 32, device='cuda')); \
+print('torch', torch.__version__, 'cuDNN', torch.backends.cudnn.version(), torch.cuda.get_device_name(0))"
+}
 
 [ -f "$KEYS" ] || fail "missing $KEYS (see scripts/aws/README.md)"
 chmod 600 "$KEYS"
@@ -36,13 +41,15 @@ step "GPU"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || fail "nvidia-smi failed: no GPU driver"
 
 step "System packages"
-command -v tmux >/dev/null && command -v git >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq tmux git curl; }
+# poppler-utils: pdfinfo and pdftoppm, which BioMiner's pdf2image calls.
+command -v tmux >/dev/null && command -v git >/dev/null && command -v pdfinfo >/dev/null \
+  || { sudo apt-get update -qq && sudo apt-get install -y -qq tmux git curl poppler-utils; } || fail "system packages"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 step "MolCensus environment (MolScribe, scoring)"
 [ -x "$PY" ] || uv venv --python 3.10 "$MOLCENSUS/.venv" || fail "uv venv"
 uv pip install -q --python "$PY" -r "$MOLCENSUS/requirements.txt" || fail "MolCensus requirements"
-"$PY" -c "import torch; assert torch.cuda.is_available(), 'torch sees no GPU'; print('torch', torch.__version__, torch.cuda.get_device_name(0))" || fail "torch CUDA"
+gpu_check "$PY" || fail "torch CUDA"
 
 step "MolSight environment (commit $MOLSIGHT_COMMIT)"
 [ -d "$MOLCENSUS/tools/MolSight/.git" ] || git clone -q https://github.com/hustvl/MolSight.git "$MOLCENSUS/tools/MolSight"
@@ -51,6 +58,7 @@ git -C "$MOLCENSUS/tools/MolSight" checkout -q "$MOLSIGHT_COMMIT"
 # Its requirements are unpinned; these two pins are explained in docs/usage.md.
 uv pip install -q --python "$MOLCENSUS/tools/molsight-env/bin/python" \
   -r "$MOLCENSUS/tools/MolSight/requirements.txt" "datasets>=3" "numpy<2" || fail "MolSight requirements"
+gpu_check "$MOLCENSUS/tools/molsight-env/bin/python" || fail "torch CUDA (MolSight)"
 
 step "Miniconda"
 [ -x "$CONDA/bin/conda" ] || {
@@ -89,6 +97,18 @@ print("models-dir", config["models-dir"], "| layoutreader-model-dir", config.get
 EOF
   fi
 fi
+# MinerU still loads this OCR model, but the latest PDF-Extract-Kit pack dropped it; take it from an older commit.
+"$PY" - <<'EOF' || fail "MinerU OCR model"
+import json, pathlib, shutil
+from huggingface_hub import hf_hub_download
+name = "models/OCR/paddleocr_torch/ch_PP-OCRv3_det_infer.pth"
+models_dir = json.loads((pathlib.Path.home() / "magic-pdf.json").read_text())["models-dir"]
+target = pathlib.Path(models_dir) / name.removeprefix("models/")
+if not target.exists():
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(hf_hub_download("opendatalab/PDF-Extract-Kit-1.0", name, revision="fe3643d1b873284fca2d90c3d731ffbc182b3566"), target)
+print("OCR model", target)
+EOF
 
 step "Weights (MolDetV2 and MolGlyph for BioMiner; MolScribe, MolSight-base, MolGlyph for the crop readers)"
 "$PY" - "$BIOMINER" "$MOLCENSUS/models" <<'EOF' || fail "weights (MolGlyph is gated: accept its terms and check HF_TOKEN)"
@@ -120,8 +140,14 @@ cat "$MOLCENSUS/.env"
 
 step "MinerU smoke test on BioMiner's example PDF"
 if [ ! -f "$HOME/.molcensus_mineru_smoke" ]; then
-  (cd "$BIOMINER" && "$CONDA/envs/BioMiner/bin/magic-pdf" -p example/pdfs/40_6s8a.pdf -o /tmp/mineru_smoke) \
-    && touch "$HOME/.molcensus_mineru_smoke" || echo "WARNING: MinerU smoke test failed; BioMiner falls back to plain text without it"
+  rm -rf /tmp/mineru_smoke
+  (cd "$BIOMINER" && "$CONDA/envs/BioMiner/bin/magic-pdf" -p example/pdfs/40_6s8a.pdf -o /tmp/mineru_smoke)
+  # magic-pdf can exit 0 after a traceback (it did on 2026-11-03), so passing means it wrote the Markdown.
+  if find /tmp/mineru_smoke -name '*.md' | grep -q .; then
+    touch "$HOME/.molcensus_mineru_smoke"
+  else
+    echo "WARNING: MinerU smoke test wrote no .md file; BioMiner falls back to plain text without MinerU"
+  fi
 fi
 
 step "Versions"
