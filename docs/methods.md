@@ -127,6 +127,50 @@ MolScribe version changes that code. `tests/test_molscribe_patch.py` covers it.
 | Course papers, valid SMILES | 237 crops | 0.806 | 0.932 | |
 | Course papers, exact recall | 219 molecules | 0.192 | 0.233 | |
 
+## The AWS GPU run (2026-11-03 and 2026-11-04)
+
+The GPU results in `results/aws/` come from one AWS instance, set up and run as described in
+`scripts/aws/README.md`.
+
+| | |
+|---|---|
+| Instance | `g5.2xlarge` in us-east-2: one NVIDIA A10G (23,028 MiB), driver 595.112.07 |
+| AMI | `ami-06a00337bcd7341f7`, "Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04) 20261030" |
+| MolScribe and MolSight | Python 3.10.12, torch 2.14.1+cu130 with its own cuDNN 9.24.0.43 (`.venv` and `tools/molsight-env`) |
+| MolGlyph and BioMiner | BioMiner commit `17c6161`, its conda environment: Python 3.10.14, torch 2.6.0+cu124 |
+| MolSight | commit `86e979b`, checkpoint MolSight-base |
+
+**cuDNN mismatch.** The first run (2026-11-03) gave MolScribe and MolSight 0.000 on every public set.
+Every image failed with `cudnnFinalize failed ... CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH`, so neither
+reader wrote a SMILES. The AMI puts its own cuDNN 9.23.2 (`/usr/local/cuda-13.2/lib`) on
+`LD_LIBRARY_PATH`, from `/etc/profile.d/dlami.sh`. torch 2.14.1 loaded the core of cuDNN
+(`libcudnn.so.9`, `libcudnn_graph.so.9`) from its own wheel, then the engine libraries
+(`libcudnn_engines_*.so.9.23.2`) from the AMI's folder, and every convolution failed.
+`torch.cuda.is_available()` still returned True. MolGlyph runs in BioMiner's conda environment, whose
+convolutions worked with the AMI's path set, so it was not affected.
+
+The fix (commit `b8a42f4`): `run_all.sh` unsets `LD_LIBRARY_PATH` for every stage and gives it back only
+to the BioMiner servers. `setup.sh` now runs one convolution on the GPU in each environment instead
+of only checking `torch.cuda.is_available()`. A crop-reader stage now fails if a reader wrote no SMILES at all.
+On 200 USPTO images (198 scored), MolScribe then gave 0.929 [0.885, 0.957] against the published
+0.926, and MolSight 0.914 [0.867, 0.946] against the published 0.912.
+
+**MinerU OCR model.** MinerU, inside BioMiner, still loads
+`models/OCR/paddleocr_torch/ch_PP-OCRv3_det_infer.pth`, which the current
+`opendatalab/PDF-Extract-Kit-1.0` model pack no longer has. `setup.sh` downloads it from commit
+`fe3643d1b873284fca2d90c3d731ffbc182b3566` (`fe3643d1b8`). On 2026-11-03 `magic-pdf` exited 0 after a
+traceback, so the MinerU smoke test now passes only if it wrote a Markdown file.
+
+**Gemini quota failure.** BioMiner gave no results on 2026-11-04. The smoke test (BioMiner's example
+`68_6r8r.pdf`, `gemini-3.5-flash`, the key set by `course_tier: paid`) reached its 45-minute
+limit. 8 MLLM calls were answered. 21 attempts were refused with HTTP 429 `RESOURCE_EXHAUSTED` on
+Google's free-tier metric `generate_content_free_tier_requests`: 1 on the 5-requests-per-minute limit
+and 20 on the 20-requests-per-day limit. The errors name the model `gemini-3.6-flash`. Another 10
+attempts got HTTP 503 ("high demand"). 4 calls failed after all 6 tries. So that key was held to free-tier
+limits, although both keys had passed a one-call test during setup. Because the smoke test did not
+pass, `run_all.sh` skipped BioMiner on the course papers and on BioVista. MolRecBench-Wild was
+skipped too, because its data file was not on the instance.
+
 ## Privacy
 
 The six course PDFs are copyrighted and their ground truth is private sponsor data. Neither is
@@ -147,4 +191,4 @@ because their images and SMILES are public. The optional W&B upload follows the 
   `_structure_merged_output_` table). A structure it read but could not link to a label is not in
   that table. Its final `_merge_` table keeps only structures with a bioactivity value; it is scored
   separately as `biominer_bioactivity`.
-- Everything ran once, on CPU.
+- Everything ran once: on the Mac CPU, and the crop readers again on one AWS GPU run (above).
