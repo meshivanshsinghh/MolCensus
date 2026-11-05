@@ -4,9 +4,10 @@ sudo shutdown -h +600  # hard stop after 10 hours if the run hangs; the end of t
 #   bash ~/molcensus/scripts/aws/run_all.sh 2>&1 | tee -a ~/runs/run_all.log
 #
 # Order: a. crop readers on the course crops; BioMiner servers and smoke test; d. BioMiner on the
-# course papers; servers stopped; b. crop readers on the public sets; c. BioMiner on BioVista papers
-# (free key); servers stopped; e. MolRecBench-Wild. The smoke test and stage d use the Gemini key
-# tier set by course_tier in configs/aws.yaml, so the smoke test checks the key stage d will use.
+# course papers; servers stopped; b. crop readers on the public sets; c. BioMiner on BioVista papers;
+# servers stopped; e. MolRecBench-Wild. Every BioMiner stage calls Gemini the same way, through Google
+# Cloud Vertex AI, signed in by AWS workload identity federation (no key on the instance; see
+# molcensus_vertex.py), so the smoke test checks the route stages d and c use.
 #
 # Each stage writes ~/runs/<stage>.log and, if it succeeds, ~/runs/<stage>.done. A done stage is
 # skipped on a rerun (delete its .done file to redo it). A stage whose data is missing is skipped. A
@@ -38,8 +39,9 @@ mkdir -p "$RUNS"
 cd "$MOLCENSUS" || exit 1
 export NO_ALBUMENTATIONS_UPDATE=1
 export HF_HUB_DOWNLOAD_TIMEOUT=180  # stage b downloads the public sets from Hugging Face
-COURSE_TIER=$("$PY" -c "import yaml; print(yaml.safe_load(open('configs/aws.yaml')).get('course_tier', ''))" 2> /dev/null)
-COURSE_CONFIG=BioMiner/config/molcensus_${COURSE_TIER}.yaml  # written by biominer_gemini.py in setup.sh
+VERTEX_ENV=$HOME/vertex.env  # Google project, service account and federation config (no secret), copied up from the Mac
+VERTEX_CONFIG=BioMiner/config/molcensus_vertex.yaml  # written by biominer_gemini.py in setup.sh
+if [ -f "$VERTEX_ENV" ]; then set -a; . "$VERTEX_ENV"; set +a; fi  # exported: BioMiner's Gemini client signs in with it
 
 stage() {  # stage <name> <estimate> <function>
   local name=$1 estimate=$2 fn=$3 started=$SECONDS code
@@ -128,36 +130,41 @@ EOF
   for tool in ${READERS//,/ }; do has_smiles "results/aws/predictions/${tool}_predictions.csv" || { echo "no $tool SMILES"; return 1; }; done
 }
 
+vertex_ready() {  # the BioMiner config for Vertex AI and the sign-in it needs
+  [ -f "$BIOMINER/$VERTEX_CONFIG" ] || { echo "no $VERTEX_CONFIG: run setup.sh (biominer_gemini.py writes it)"; return 1; }
+  [ -n "${VERTEX_WIF_CONFIG:-}" ] || { echo "no VERTEX_WIF_CONFIG: copy ~/.molcensus/vertex.env up to $VERTEX_ENV"; return 1; }
+}
+
 smoke_check() {  # smoke_check <BioMiner output folder> <BioMiner output log>
-  # Passes only with a structure table and at most 2 MLLM calls lost after all retries. A refused or
-  # exhausted key loses every call, and stage d's results would then be kept by the rerun rule.
+  # Passes only with a structure table and at most 2 MLLM calls lost after all retries. A refused
+  # sign-in or a spent quota loses every call, and stage d's results would then be kept by the rerun rule.
   local lost
   find "$1" -name '*_structure_merged_output_*.csv' | grep -q . || { echo "smoke test wrote no structure table"; return 1; }
   lost=$(grep -c ' try failed:' "$2")
-  [ "$lost" -le 2 ] || { echo "smoke test FAILED: $lost MLLM calls lost after all retries (more than 2); check the key and its quota"; return 1; }
-  echo "smoke test passed with the $COURSE_TIER key; MLLM calls lost after all retries: $lost"
+  [ "$lost" -le 2 ] || { echo "smoke test FAILED: $lost MLLM calls lost after all retries (more than 2); check the Vertex AI sign-in and quota"; return 1; }
+  echo "smoke test passed (Gemini on Vertex AI); MLLM calls lost after all retries: $lost"
 }
 
-# BioMiner servers, then a smoke test on BioMiner's own example with the course-tier key, limit 45 minutes.
+# BioMiner servers, then a smoke test on BioMiner's own example, limit 45 minutes.
 biominer_smoke() {
-  [ -f "$BIOMINER/$COURSE_CONFIG" ] || { echo "no $COURSE_CONFIG: no key for course_tier '$COURSE_TIER'"; return $SKIP; }
+  vertex_ready || return $SKIP
   start_servers || return 1
   # Start empty: BioMiner reuses MLLM answers it finds in its output folder, so a rerun would otherwise
   # reuse the empty answers of a refused key without calling Gemini again.
   rm -rf "$RUNS/biominer_smoke"
   limited 45m bash -c "cd '$BIOMINER' && PYTHONPATH=./ '$BIOMINER_PY' example_open_source.py \
-    --config_path=$COURSE_CONFIG --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
+    --config_path=$VERTEX_CONFIG --pdf=example/pdfs/68_6r8r.pdf --output_dir='$RUNS/biominer_smoke'" \
     > "$RUNS/biominer_smoke_output.log" 2>&1 \
     || { local code=$?; echo "smoke test did not finish (exit $code); see $RUNS/biominer_smoke_output.log"; return $code; }
   smoke_check "$RUNS/biominer_smoke" "$RUNS/biominer_smoke_output.log"
 }
 
-# d. BioMiner on the six course PDFs (course-tier key, gemini-3.5-flash), only with the permission file, limit 2 hours.
+# d. BioMiner on the six course PDFs (gemini-3.5-flash on Vertex AI), only with the permission file, limit 2 hours.
 biominer_course() {
   [ -e "$RUNS/biominer_smoke.done" ] || { echo "the BioMiner smoke test has not passed"; return $SKIP; }
   [ -f "$PERMISSION_FLAG" ] || { echo "no permission flag $PERMISSION_FLAG"; return $SKIP; }
   ls data/pdfs/*.pdf > /dev/null 2>&1 || { echo "no course PDFs in data/pdfs"; return $SKIP; }
-  [ -f "$BIOMINER/$COURSE_CONFIG" ] || { echo "no $COURSE_CONFIG: no key for course_tier '$COURSE_TIER'"; return $SKIP; }
+  vertex_ready || return $SKIP
   echo "Permission record ($PERMISSION_FLAG):"; cat "$PERMISSION_FLAG"; echo
   start_servers || return 1
   limited 2h "$PY" run_pipeline.py --config configs/aws.yaml --steps recognize --tools biominer || return $?
@@ -171,10 +178,10 @@ public_readers() {
   for tool in ${READERS//,/ }; do has_smiles "results/aws/public/${tool}_predictions.csv" || { echo "no $tool SMILES"; return 1; }; done
 }
 
-# c. BioMiner on BioVista papers (free key), limit 3 hours.
+# c. BioMiner on BioVista papers, limit 3 hours.
 biominer_biovista() {
   [ -e "$RUNS/biominer_smoke.done" ] || { echo "the BioMiner smoke test has not passed"; return $SKIP; }
-  [ -f "$BIOMINER/BioMiner/config/molcensus_free.yaml" ] || { echo "no molcensus_free.yaml: no free Gemini key"; return $SKIP; }
+  vertex_ready || return $SKIP
   mkdir -p data/biovista/pdfs
   cp -n "$BIOMINER"/example/pdfs/*.pdf data/biovista/pdfs/  # 40_6s8a and 68_6r8r, shipped with BioMiner
   local papers
@@ -212,11 +219,11 @@ echo "run_all.sh started $(date). After the last stage the results go to S3 (fol
 echo "stops; if the upload fails it stops 8 hours later, and if run_all.sh hangs, 10 hours from now"
 echo "Plan (estimates, not measured on this GPU; limits in brackets):"
 echo "  a. course_readers     237 crops x 3 readers                                         about 10 min"
-echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf ($COURSE_TIER key)  15 to 45 min [45 min]"
-echo "  d. biominer_course    6 course papers ($COURSE_TIER key), only with $PERMISSION_FLAG        20 to 60 min [2 h]"
+echo "     biominer_smoke     servers, then BioMiner on example/pdfs/68_6r8r.pdf (Vertex AI)    15 to 45 min [45 min]"
+echo "  d. biominer_course    6 course papers (Vertex AI), only with $PERMISSION_FLAG            20 to 60 min [2 h]"
 echo "     (servers stopped)"
 echo "  b. public_readers     21,643 images (USPTO, UOB, CLEF, ACS, BioVista) x 3 readers    1.5 to 3.5 h"
-echo "  c. biominer_biovista  $n_biovista BioVista papers (free key) at 3 to 10 min each          $(( 3 * n_biovista )) to $(( 10 * n_biovista )) min [3 h]"
+echo "  c. biominer_biovista  $n_biovista BioVista papers (Vertex AI) at 3 to 10 min each          $(( 3 * n_biovista )) to $(( 10 * n_biovista )) min [3 h]"
 echo "     (servers stopped)"
 echo "  e. molrecbench_wild   5,029 images x 3 readers, if converted                        20 to 50 min"
 

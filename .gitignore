@@ -29,6 +29,9 @@ results/**/run_log.txt
 
 # Private notes, report drafts and downloaded bundles
 TASKS.md
+# The owner's Vertex AI checker, and a handoff note that names the Google project and service account
+testing_key.py
+docs/handoff_vertex.md
 reports/
 *.zip
 

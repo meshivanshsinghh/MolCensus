@@ -64,8 +64,8 @@ recognizers:
     enabled: false
     repo_dir: ${BIOMINER_DIR}
     python_executable: ${BIOMINER_PYTHON}
-    config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM API key and model names
-                                                             # (scripts/aws/biominer_gemini.py writes molcensus_free/paid.yaml)
+    config_path: BioMiner/config/default_open_source.yaml    # relative to repo_dir; holds the MLLM endpoint and model names
+                                                             # (scripts/aws/biominer_gemini.py writes molcensus_vertex.yaml)
     timeout_s: 3600
     extra_args: ""          # extra flags for example_open_source.py, e.g. --biovista_evaluate
 

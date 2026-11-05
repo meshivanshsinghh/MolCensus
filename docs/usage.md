@@ -147,20 +147,25 @@ One run is created in the `molcensus` project (`--wandb-project` and `--wandb-en
 
 1. Clone https://github.com/jiaxianyan/BioMiner and follow its installation steps (two conda
    environments, model weights).
-2. Give it an MLLM. MolCensus uses Gemini through Gemini's OpenAI-compatible endpoint.
-   `scripts/aws/biominer_gemini.py --keys <keys file> --biominer <clone> --check` writes
-   `BioMiner/config/molcensus_free.yaml` (free-tier key, public papers) and `molcensus_paid.yaml`
-   (paid-tier key, course papers) inside the clone, both with `gemini-3.5-flash`, then sends one test
-   request per key shaped like BioMiner's own. `run_all.sh` sends the course PDFs only when its
-   permission flag file exists. The keys file and the configs stay outside this repo. BioMiner picks
-   its Gemini prompts for any model name without "gpt".
+2. Give it an MLLM. MolCensus uses Gemini (`gemini-3.5-flash`) on Google Cloud Vertex AI, through
+   Vertex's OpenAI-compatible endpoint, for every paper. `scripts/aws/patch_biominer.py <clone>` makes
+   BioMiner's client send a fresh Google token with every request (no API key) and retry by the rules
+   in `scripts/aws/molcensus_vertex.py`. `scripts/aws/biominer_gemini.py --vertex <vertex.env>
+   --biominer <clone> --identity --check` writes `BioMiner/config/molcensus_vertex.yaml` inside the
+   clone, checks the sign-in and sends one test request through the patched client.
+   `scripts/aws/README.md` explains the sign-in (AWS workload identity federation on the instance,
+   your gcloud login on the Mac) and `vertex.env`, which stays outside this repo. `run_all.sh` sends
+   the course PDFs only when its permission flag file exists. BioMiner picks its Gemini prompts for
+   any model name without "gpt".
 3. Start its MinerU, MolDet and OCSR servers.
 4. Copy `.env.example` to `.env` and set `BIOMINER_DIR` and `BIOMINER_PYTHON`.
-5. Set `recognizers.biominer.enabled: true` and `tier: free` or `tier: paid` (that picks
-   `molcensus_<tier>.yaml`; `configs/aws.yaml` sets it for the course papers with `course_tier`).
+5. Set `recognizers.biominer.enabled: true` and `config_path: BioMiner/config/molcensus_vertex.yaml`
+   (on the GPU instance, `configs/aws.yaml` sets the path and `run_all.sh` turns the tool on with
+   `--tools biominer`).
 
-Each paper's output folder gets `run_info.json` with the model names, the key tier, the number of
-MLLM calls lost after all retries, and the input, output and total tokens of the answered calls.
+Each paper's output folder gets `run_info.json` with the model names, the endpoint (`vertex`), the
+models the API says answered, the number of MLLM calls lost after all retries, and the input, output
+and total tokens of the answered calls.
 Unpatched BioMiner tries each call once and carries on with an empty answer, so check the lost-call
 number: a rate-limited run otherwise looks normal, just with fewer molecules. A paper that already has
 `run_info.json` counts as finished: a rerun reuses it (`--force` reruns it). On SIGTERM, for example

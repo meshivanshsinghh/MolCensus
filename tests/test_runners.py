@@ -22,8 +22,8 @@ out.mkdir(parents=True)
 pathlib.Path(args["output_dir"]).parent.joinpath("calls.log").open("a").write(name + "\n")
 if name == "1":  # two lost MLLM calls and two answered ones, as patched BioMiner logs them
     print("gemini-x 0 try failed: Error code: 429\ngemini-x 0 try failed: Error code: 429")
-    print('MOLCENSUS_USAGE {"input": 1000, "output": 200, "total": 1300}')
-    print('MOLCENSUS_USAGE {"input": 500, "output": 50, "total": 600}')
+    print('MOLCENSUS_USAGE {"model": "google/gemini-x-001", "input": 1000, "output": 200, "total": 1300}')
+    print('MOLCENSUS_USAGE {"model": "google/gemini-x-001", "input": 500, "output": 50, "total": 600}')
 s = "moldetv2_bbox_molglyph_ocsr__updated_v3_with_index_split4seg0.125_bg_lo"
 (out / f"{name}_structure_full_output_{s}.csv").write_text("ligand,smiles\n9z,CCCC\n")
 (out / f"{name}_structure_merged_output_{s}_{s}_clean_new.csv").write_text(",ligand,smiles\n0,x,CCCl\n")
@@ -44,7 +44,8 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     repo = tmp_path / "BioMiner"
     repo.mkdir()
     (repo / "example_open_source.py").write_text(FAKE_BIOMINER)
-    (repo / "c.yaml").write_text("molcensus_tier: free\nmodel:\n  text_mllm_type: gemini-x\n  vision_mllm_type: gemini-x\n")
+    (repo / "c.yaml").write_text("model:\n  base_url: https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/openapi\n"
+                                 "  text_mllm_type: gemini-x\n  vision_mllm_type: gemini-x\n")
     pdfs = {}
     for paper in (1, 2, 3):
         pdfs[paper] = tmp_path / f"{paper}.pdf"
@@ -74,14 +75,16 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     assert len(paper3) == 1 and paper3["error"].iloc[0] == "no readable output table"
     assert pairs(bioactivity, 3) == [("9a", "CCO")]
 
-    # Every paper records the model names and how many MLLM calls failed.
+    # Every paper records the model names, the endpoint (not its URL, which names the project), the
+    # models the API says answered, and how many MLLM calls failed.
     info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
-    assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x" and info["tier"] == "free"
+    assert info["text_model"] == "gemini-x" and info["vision_model"] == "gemini-x" and info["endpoint"] == "vertex"
+    assert info["api_models"] == ["google/gemini-x-001"] and "projects/p" not in json.dumps(info)
     assert info["api_failures"] == 2 and info["n_predictions"] == {"biominer": 2, "biominer_bioactivity": 1}
     assert info["input_tokens"] == 1500 and info["output_tokens"] == 250 and info["total_tokens"] == 1900
     assert info["mllm_calls_answered"] == 2
     paper2 = json.loads((tmp_path / "out" / "2" / "run_info.json").read_text())
-    assert paper2["api_failures"] == 0 and paper2["input_tokens"] is None  # no usage lines: unknown, not zero
+    assert paper2["api_failures"] == 0 and paper2["input_tokens"] is None and paper2["api_models"] is None  # unknown, not zero
 
     # A rerun reuses finished papers instead of calling BioMiner again; force reruns them.
     again = run_biominer(pdfs, settings, tmp_path / "out")
@@ -167,20 +170,6 @@ def test_crop_reader_keeps_rows_written_before_a_crash(tmp_path):
     assert (predictions["tool"] == "fake").all() and predictions.loc["c", "paper_id"] == 2
 
 
-def test_biominer_tier_picks_its_config(tmp_path):
-    repo = tmp_path / "BioMiner"
-    (repo / "BioMiner" / "config").mkdir(parents=True)
-    (repo / "example_open_source.py").write_text(SLOW_BIOMINER)
-    (repo / "BioMiner" / "config" / "molcensus_paid.yaml").write_text("molcensus_tier: paid\nmodel:\n  text_mllm_type: gemini-x\n")
-    (tmp_path / "1.pdf").write_bytes(b"%PDF-1.4")
-    settings = {"repo_dir": str(repo), "python_executable": sys.executable, "config_path": "unused.yaml", "tier": "paid"}
-
-    run_biominer({1: tmp_path / "1.pdf"}, settings, tmp_path / "out")
-
-    info = json.loads((tmp_path / "out" / "1" / "run_info.json").read_text())
-    assert info["config_path"] == "BioMiner/config/molcensus_paid.yaml" and info["tier"] == "paid"
-
-
 def test_smoke_gate_fails_when_more_than_two_calls_are_lost(tmp_path):
     import shutil
     import subprocess
@@ -199,7 +188,7 @@ def test_smoke_gate_fails_when_more_than_two_calls_are_lost(tmp_path):
     def gate(lost_calls):
         log = tmp_path / "smoke_output.log"
         log.write_text("".join(f"gemini-3.5-flash {i} try failed: Error code: 403\n" for i in range(lost_calls)) + "done\n")
-        return subprocess.run(["bash", "-c", f'{function}\nCOURSE_TIER=paid\nsmoke_check "$1" "$2"', "gate",
+        return subprocess.run(["bash", "-c", f'{function}\nsmoke_check "$1" "$2"', "gate",
                                str(tmp_path / "biominer_smoke"), str(log)], capture_output=True, text=True)
 
     passed, failed = gate(0), gate(3)

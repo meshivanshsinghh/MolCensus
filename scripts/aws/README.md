@@ -2,8 +2,8 @@
 
 One trip to a single-GPU instance runs everything that needs a GPU: three crop readers (MolScribe,
 MolSight, MolGlyph) on the course crops and on the full public sets, and BioMiner end to end on the
-course papers (paid Gemini key, with permission) and on BioVista papers (free key). Scoring of the
-course papers happens back on the Mac. **The ground-truth CSV never leaves the Mac**: the instance
+course papers (with permission) and on BioVista papers, with Gemini on Google Cloud Vertex AI. Scoring
+of the course papers happens back on the Mac. **The ground-truth CSV never leaves the Mac**: the instance
 uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 | File | What it does |
@@ -11,8 +11,9 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 | `setup.sh` | Installs everything on a fresh instance. Safe to rerun. Log: `~/setup.log` |
 | `run_all.sh` | Runs the stages in order, uploads the results to S3, then stops the instance. Logs: `~/runs/` |
 | `upload_results.sh` | The upload and its file-count check (called by run_all.sh). Log: `~/runs/upload.log` |
-| `patch_biominer.py` | Local BioMiner edits: one GPU, retries for failed MLLM calls, token counts (called by setup.sh) |
-| `biominer_gemini.py` | Writes BioMiner's two Gemini configs (free key, paid key) and tests both keys (called by setup.sh) |
+| `patch_biominer.py` | Local BioMiner edits: one GPU, Vertex AI sign-in, retries for failed MLLM calls, model and token counts (called by setup.sh) |
+| `molcensus_vertex.py` | The Vertex AI sign-in (a fresh Google token on every request) and the retry rules; copied into the BioMiner clone |
+| `biominer_gemini.py` | Writes BioMiner's Vertex AI config, checks the sign-in and sends one test call (called by setup.sh) |
 | `../../configs/aws*.yaml` | Instance configs; `aws_score.yaml` is for scoring on the Mac |
 
 ## Before launch (on the Mac)
@@ -35,31 +36,69 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
 
 2. Hugging Face: accept the terms at https://huggingface.co/jiaxianustc/MolGlyph (it is gated; the
    dry run here got 401 without that) and create a read token.
-3. Gemini: two keys. The free-tier key reads the BioVista papers; the paid-tier key reads the six
-   course papers. `course_tier: paid` in `configs/aws.yaml` picks the key for the course papers, and
-   the smoke test uses the same key as stage d. Both keys use `gemini-3.5-flash` (set in
-   `biominer_gemini.py`): in a test on 2026-10-29, `gemini-3.8-flash` returned 503 "high demand"
-   twice, while `gemini-3.5-flash` read an image with `response_format: json_object` correctly after
-   one 503.
+3. Gemini on Google Cloud Vertex AI, for every BioMiner stage. BioMiner calls Vertex AI's
+   OpenAI-compatible endpoint with `gemini-3.5-flash` (set in `biominer_gemini.py`; in a test on
+   2026-10-29, `gemini-3.8-flash` returned 503 "high demand" twice), billed to a Google Cloud project.
+   Set a budget alert on that project's billing account. The instance signs in with AWS workload
+   identity federation: Google trusts the instance role `molcensus-ec2` and lets only that role act
+   as a service account that may call Vertex AI (`roles/aiplatform.user`). So no key is stored on the
+   instance; service-account keys and service-account API keys are also blocked by the organization's
+   policy. Done once (2026-11-04), with gcloud signed in as the project owner:
+
+   ```bash
+   PROJECT=<project id>; SA=<service account>@$PROJECT.iam.gserviceaccount.com
+   POOL_ID=<pool id>; PROVIDER_ID=<provider id>
+   PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+   AWS_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+   POOL=projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/$POOL_ID
+   gcloud services enable iam.googleapis.com cloudresourcemanager.googleapis.com sts.googleapis.com \
+     iamcredentials.googleapis.com aiplatform.googleapis.com --project=$PROJECT
+   gcloud iam workload-identity-pools create $POOL_ID --project=$PROJECT --location=global
+   gcloud iam workload-identity-pools providers create-aws $PROVIDER_ID --project=$PROJECT --location=global \
+     --workload-identity-pool=$POOL_ID --account-id=$AWS_ACCOUNT \
+     --attribute-mapping="google.subject=assertion.arn,attribute.aws_role=assertion.arn.extract('assumed-role/{role_name}/')" \
+     --attribute-condition="assertion.arn.startsWith('arn:aws:sts::$AWS_ACCOUNT:assumed-role/molcensus-ec2/')"
+   gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT --role=roles/iam.workloadIdentityUser \
+     --member="principalSet://iam.googleapis.com/$POOL/attribute.aws_role/molcensus-ec2"
+   gcloud iam workload-identity-pools create-cred-config $POOL/providers/$PROVIDER_ID \
+     --service-account=$SA --aws --enable-imdsv2 --output-file=/tmp/vertex_wif.json
+   (umask 077; cat > ~/.molcensus/vertex.env <<EOF
+   VERTEX_PROJECT=$PROJECT
+   VERTEX_SERVICE_ACCOUNT=$SA
+   VERTEX_WIF_CONFIG='$(python3 -c 'import json, sys; print(json.dumps(json.load(open(sys.argv[1]))))' /tmp/vertex_wif.json)'
+   EOF
+   ); rm /tmp/vertex_wif.json
+   ```
+
+   The provider's condition lets only that role get a Google token at all, and the binding lets only
+   that role act as the service account. `vertex.env` holds no secret (the federation config only says
+   where to get AWS credentials and whom to ask for a Google token), but it names the project, so it
+   stays out of git. Check it from the Mac before launch: this signs in as you (`gcloud auth
+   application-default login`; you need `roles/iam.serviceAccountTokenCreator` on the service account)
+   and sends one call through patched BioMiner code, in a local clone at commit 17c6161:
+
+   ```bash
+   git clone -q https://github.com/jiaxianyan/BioMiner.git tools/BioMiner && git -C tools/BioMiner checkout -q 17c6161
+   python scripts/aws/patch_biominer.py tools/BioMiner
+   VERTEX_AUTH=impersonate python scripts/aws/biominer_gemini.py --vertex ~/.molcensus/vertex.env --biominer tools/BioMiner --identity --check
+   ```
+
 4. The keys file, outside the repo: `~/.molcensus/molcensus_keys.env` (folder mode 700, file mode
-   600). It starts as a template with these names and empty values; fill them in with an editor:
+   600), next to `vertex.env`. It holds one value; fill it in with an editor:
 
    | Name | What |
    |---|---|
    | `HF_TOKEN` | Hugging Face read token (MolGlyph's terms accepted first) |
-   | `GEMINI_API_KEY_FREE` | Gemini key, free tier: the BioVista papers |
-   | `GEMINI_API_KEY_PAID` | Gemini key, paid tier: the smoke test and the six course papers |
 
 5. BioVista PDFs you want BioMiner to read go in `data/biovista/pdfs/`, named `<index>_<pdb id>.pdf`
    (for example `68_6r8r.pdf`). The two in BioMiner's `example/pdfs/` are added on the instance.
    BioVista's labels go in `data/biovista/labels/` (500 `<name>_structure.csv` plus `<name>_data.csv`)
    and `data/biovista/structure_annotation/` (`labels/INDEX_general_PL_*.2020`, `data/<pdb id>/`).
-6. Course papers: stage d sends the six course PDFs to Gemini (the `course_tier` key) only if the
-   permission file `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path
-   on the Mac (outside the repo) and records who approved it, how, when and for what; "Copy up" sends
-   it. Stage d prints it into its log, and each paper's `run_info.json` records the tier actually
-   used. If you switch `course_tier` to `free`, also change the Scope line in
-   `~/COURSE_PDFS_PERMISSION_GIVEN` to "free tier" to match.
+6. Course papers: stage d sends the six course PDFs to Gemini on Vertex AI only if the permission
+   file `~/COURSE_PDFS_PERMISSION_GIVEN` exists on the instance. It lives at the same path on the Mac
+   (outside the repo) and records who approved it, how, when and for what (its Scope line names
+   Vertex AI); "Copy up" sends it. Stage d prints it into its log, and each paper's `run_info.json`
+   records the endpoint and the model the API says answered.
 
 ## Launch
 
@@ -162,8 +201,8 @@ aws ec2 authorize-security-group-ingress --region $REGION --group-id $SG --proto
 cd ~/Professional/MolCensus
 # Code: only tracked files, so nothing private (data/, results/predictions/, results/scored/) goes up.
 git archive --format=tar HEAD | $SSH $HOST 'mkdir -p molcensus && tar -x -C molcensus'
-scp -i ~/.ssh/molcensus.pem ~/.molcensus/molcensus_keys.env $HOST:molcensus_keys.env
-$SSH $HOST chmod 600 molcensus_keys.env
+scp -i ~/.ssh/molcensus.pem ~/.molcensus/molcensus_keys.env ~/.molcensus/vertex.env $HOST:
+$SSH $HOST chmod 600 molcensus_keys.env vertex.env
 # The 237 course crops and their index (run_all.sh rewrites the Mac paths in it).
 $SSH $HOST 'mkdir -p molcensus/outputs/work molcensus/data/biovista/pdfs molcensus/data/pdfs'
 rsync -a -e "$SSH" outputs/work/crops_moldet outputs/work/crops_index.csv $HOST:molcensus/outputs/work/
@@ -207,20 +246,20 @@ $SSH $HOST 'grep -E "biominer_smoke|biominer_course" runs/run_all.log; tail -n 1
 $SSH $HOST 'grep "BioMiner: paper" runs/biominer_course.log | head -n 3'
 ```
 
-You want `[biominer_smoke] done after N min`, a last smoke-log line `smoke test passed with the paid
-key; MLLM calls lost after all retries: 0` (at most 2 is allowed), then `[biominer_course] started`
-and `BioMiner: paper 1` in stage d's log. If the smoke test fails (for example because more than 2
-calls were lost, as with a refused key), stages d and c are skipped; BioMiner's own output is in
-`runs/biominer_smoke_output.log`.
+You want `[biominer_smoke] done after N min`, a last smoke-log line `smoke test passed (Gemini on
+Vertex AI); MLLM calls lost after all retries: 0` (at most 2 is allowed), then `[biominer_course]
+started` and `BioMiner: paper 1` in stage d's log. If the smoke test fails (for example because more
+than 2 calls were lost, as with a refused sign-in or a spent quota), stages d and c are skipped;
+BioMiner's own output is in `runs/biominer_smoke_output.log`.
 
 | Order | Stage | What | Needs | Estimate | Time limit |
 |---|---|---|---|---|---|
 | 1 | a. course_readers | MolScribe, MolSight, MolGlyph on the 237 course crops | crops copied up | about 10 min | none |
-| 2 | biominer_smoke | start the BioMiner servers, then BioMiner on `example/pdfs/68_6r8r.pdf`; fails if more than 2 MLLM calls are lost | `course_tier` key (paid) | 15 to 45 min | 45 min |
-| 3 | d. biominer_course | BioMiner on the six course PDFs | smoke test passed, `course_tier` key (paid), PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min | 2 h |
+| 2 | biominer_smoke | start the BioMiner servers, then BioMiner on `example/pdfs/68_6r8r.pdf`; fails if more than 2 MLLM calls are lost | `vertex.env` | 15 to 45 min | 45 min |
+| 3 | d. biominer_course | BioMiner on the six course PDFs | smoke test passed, PDFs, `~/COURSE_PDFS_PERMISSION_GIVEN` | 20 to 60 min | 2 h |
 | | | servers stopped, GPU memory checked free | | | |
 | 4 | b. public_readers | the three readers on all of USPTO, UOB, CLEF, ACS and BioVista OCSR (21,643 images), scored on the instance | downloads itself | 1.5 to 3.5 h | none |
-| 5 | c. biominer_biovista | BioMiner on every BioVista PDF | smoke test passed, free key | 3 to 10 min per paper | 3 h |
+| 5 | c. biominer_biovista | BioMiner on every BioVista PDF | smoke test passed | 3 to 10 min per paper | 3 h |
 | | | servers stopped | | | |
 | 6 | e. molrecbench_wild | the three readers on MolRecBench-Wild | `data/public/molrecbench_wild/molrecbench_wild.csv` | 20 to 50 min | none |
 
@@ -245,7 +284,7 @@ label sets come from is in docs/methods.md (BioVista paragraph).
 ```bash
 $SSH $HOST 'tail -n 15 runs/run_all.log; ls runs/*.done 2>/dev/null; nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv'
 $SSH $HOST 'tail -n 5 runs/public_readers.log'                   # one stage's log
-$SSH $HOST 'cat molcensus/outputs/work*/biominer_output/*/run_info.json'   # BioMiner: tier, model, errors, lost calls, tokens
+$SSH $HOST 'cat molcensus/outputs/work*/biominer_output/*/run_info.json'   # BioMiner: endpoint, models, errors, lost calls, tokens
 $SSH -t $HOST 'tmux attach -t run'                                # watch live; detach with Ctrl-b d
 ```
 
@@ -255,8 +294,9 @@ rerun it.
 
 For cost, each paper's `run_info.json` has `input_tokens` and `output_tokens` (all answered MLLM calls
 added up), plus `total_tokens`. If `total_tokens` is larger than the two together, the rest is most
-likely the model's thinking tokens; check Google's pricing for how they are billed. The values are
-`null` when no call was answered.
+likely the model's thinking tokens; check Google's pricing for how they are billed. `api_models` lists
+the models the API says answered (on 2026-11-04 the AI Studio errors named `gemini-3.6-flash`,
+although `gemini-3.5-flash` was asked for). The values are `null` when no call was answered.
 
 ## Copy back from S3
 
@@ -332,8 +372,14 @@ tool, including `biominer_bioactivity`.
 ## Clean up
 
 ```bash
-$SSH $HOST 'rm -rf molcensus/data/pdfs molcensus/outputs/work/crops_moldet molcensus_keys.env'
+$SSH $HOST 'rm -rf molcensus/data/pdfs molcensus/outputs/work/crops_moldet molcensus_keys.env vertex.env'
 aws ec2 terminate-instances --region $REGION --instance-ids $ID   # also deletes its disk
 aws ec2 wait instance-terminated --region $REGION --instance-ids $ID
 aws ec2 describe-volumes --region $REGION --query 'Volumes[].[VolumeId,State,Size,CreateTime]' --output table   # should list none
+```
+
+On the Google side, deleting the pool ends the federation (the service account stays):
+
+```bash
+gcloud iam workload-identity-pools delete $POOL_ID --project=$PROJECT --location=global
 ```

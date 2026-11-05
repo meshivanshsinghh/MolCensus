@@ -18,10 +18,11 @@ The structure tables are written before BioMiner's final merge step, and that st
 (it raises ValueError when labels cannot be mapped to SMILES). The structure tables are then kept,
 and each kept row notes the failure in its error column.
 
-Each paper's output folder also gets run_info.json: the MLLM names and key tier from BioMiner's
-config, the error if any, how many MLLM calls failed, and the input, output and total tokens (for cost). BioMiner
-tries each call once and carries on with an empty answer, so a rate-limited run looks normal unless
-that count is checked. A paper with run_info.json counts as finished: a rerun reuses it.
+Each paper's output folder also gets run_info.json: the MLLM names and endpoint from BioMiner's
+config (vertex for Google Cloud Vertex AI), the error if any, how many MLLM calls failed, the models the
+API says answered, and the input, output and total tokens (for cost). BioMiner tries each call once and
+carries on with an empty answer, so a rate-limited run looks normal unless that count is checked. A
+paper with run_info.json counts as finished: a rerun reuses it.
 
 Requirements (from the BioMiner README): one 24 GB GPU in API mode, the MinerU,
 MolDet and OCSR servers started from the BioMiner repo, and an MLLM API key in
@@ -61,7 +62,7 @@ OUTPUT_TABLES = [
 
 
 def _mllm_settings(config_file: Path) -> dict:
-    """The MLLM names and key tier in BioMiner's config. They are logged and saved with every run."""
+    """The MLLM names and endpoint in BioMiner's config. They are logged and saved with every run."""
     try:
         config = yaml.safe_load(config_file.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:
@@ -71,15 +72,9 @@ def _mllm_settings(config_file: Path) -> dict:
     return {
         "text_model": model.get("text_mllm_type", "unknown"),
         "vision_model": model.get("vision_mllm_type", "unknown"),
-        "tier": config.get("molcensus_tier", "unknown"),  # written by scripts/aws/biominer_gemini.py
+        # Only the kind: the URL names the Google project, which stays out of saved files.
+        "endpoint": "vertex" if "aiplatform.googleapis.com" in str(model.get("base_url")) else "other",
     }
-
-
-def _config_path(settings: dict) -> str:
-    """BioMiner config to use: molcensus_<tier>.yaml (written by scripts/aws/biominer_gemini.py) when a
-    key tier is set, else config_path."""
-    tier = settings.get("tier")
-    return f"BioMiner/config/molcensus_{tier}.yaml" if tier else settings["config_path"]
 
 
 def _read_tables(paper_output: Path, pattern: str) -> list[pd.DataFrame]:
@@ -139,9 +134,10 @@ def _stop(signum, frame):
 
 
 def _token_totals(output: str) -> dict:
-    """Add up the MOLCENSUS_USAGE lines that patched BioMiner prints, one per answered MLLM call.
-    All None when there are none (BioMiner without scripts/aws/patch_biominer.py)."""
+    """Add up the MOLCENSUS_USAGE lines that patched BioMiner prints, one per answered MLLM call, and list
+    the models the API says answered. All None when there are none (BioMiner without scripts/aws/patch_biominer.py)."""
     totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "mllm_calls_answered": 0}
+    models = set()
     for line in output.splitlines():
         if not line.startswith("MOLCENSUS_USAGE "):
             continue
@@ -153,6 +149,8 @@ def _token_totals(output: str) -> dict:
         totals["output_tokens"] += int(usage.get("output") or 0)
         totals["total_tokens"] += int(usage.get("total") or 0)
         totals["mllm_calls_answered"] += 1
+        models.add(str(usage.get("model")))
+    totals["api_models"] = sorted(models)
     return totals if totals["mllm_calls_answered"] else dict.fromkeys(totals)
 
 
@@ -195,10 +193,10 @@ def run_biominer(pdfs: dict[int, Path], settings: dict, output_root: Path, force
     python_exe = expand(str(settings.get("python_executable", ""))) or "python"
 
     environment = {**os.environ, "PYTHONPATH": str(repo_dir)}
-    config_path = _config_path(settings)
+    config_path = settings["config_path"]
     models = _mllm_settings(repo_dir / config_path)
-    log.info("BioMiner models: text %s, vision %s, key tier %s (config %s)",
-             models["text_model"], models["vision_model"], models["tier"], config_path)
+    log.info("BioMiner models: text %s, vision %s, endpoint %s (config %s)",
+             models["text_model"], models["vision_model"], models["endpoint"], config_path)
     records = {tool: [] for tool, _ in OUTPUT_TABLES}
     previous_handler = signal.signal(signal.SIGTERM, _stop)
     paper_id = None

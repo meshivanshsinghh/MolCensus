@@ -1,5 +1,5 @@
 # Stage c of scripts/aws/run_all.sh: BioMiner on BioVista papers, named <index>_<pdb id>.pdf as
-# BioMiner's evaluator expects, with the free Gemini key (public papers only).
+# BioMiner's evaluator expects. Gemini on Vertex AI, as for the course papers.
 extends: aws.yaml
 
 paths:
@@ -9,5 +9,4 @@ paths:
 
 recognizers:
   biominer:
-    tier: free                         # BioMiner/config/molcensus_free.yaml, whatever course_tier says
     extra_args: ${BIOMINER_EXTRA_ARGS}   # run_all.sh sets --biovista_evaluate when BioVista's labels are there

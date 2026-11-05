@@ -5,10 +5,9 @@
 # Safe to rerun: every step checks whether it is already done. Everything goes to ~/setup.log.
 #   bash ~/molcensus/scripts/aws/setup.sh
 #
-# Needs ~/molcensus_keys.env, copied up from the Mac (never committed):
-#   HF_TOKEN=...              Hugging Face read token; accept MolGlyph's terms on its model page first
-#   GEMINI_API_KEY_FREE=...   public papers (stage c and the smoke test)
-#   GEMINI_API_KEY_PAID=...   the six course papers (stage d, only with run_all.sh's permission flag)
+# Needs two files copied up from the Mac (never committed; see scripts/aws/README.md):
+#   ~/molcensus_keys.env  HF_TOKEN=... (Hugging Face read token; accept MolGlyph's terms on its model page first)
+#   ~/vertex.env          Gemini on Vertex AI: Google project, service account, AWS federation config (no secret)
 # The Gemini model (gemini-3.5-flash) is set in biominer_gemini.py, not here.
 set -uo pipefail
 exec > >(tee -a "$HOME/setup.log") 2>&1
@@ -17,6 +16,7 @@ echo "=== setup.sh started $(date -u +%FT%TZ)"
 MOLCENSUS=$(cd "$(dirname "$0")/../.." && pwd)
 BIOMINER=$HOME/BioMiner
 KEYS=$HOME/molcensus_keys.env
+VERTEX_ENV=$HOME/vertex.env
 CONDA=$HOME/miniconda3
 BIOMINER_COMMIT=17c6161
 MOLSIGHT_COMMIT=86e979b
@@ -130,9 +130,15 @@ EOF
 step "Local BioMiner edits: one GPU, and retries for failed MLLM calls"
 "$PY" "$MOLCENSUS/scripts/aws/patch_biominer.py" "$BIOMINER" || fail "BioMiner patch"
 
-step "BioMiner configs for Gemini, and one test call per key"
-"$BIOMINER_PY" "$MOLCENSUS/scripts/aws/biominer_gemini.py" --keys "$KEYS" --biominer "$BIOMINER" --check \
-  || echo "WARNING: a Gemini check failed (see above). BioMiner stages will lose content until this is fixed."
+step "Gemini on Vertex AI: BioMiner config, sign-in through AWS federation, one test call"
+# google-auth is in BioMiner's environment file (2.38.0); install it only if it is missing.
+"$BIOMINER_PY" -c "import google.auth" 2> /dev/null || "$BIOMINER_PY" -m pip install -q "google-auth==2.38.0" || fail "google-auth"
+if [ -f "$VERTEX_ENV" ]; then
+  "$BIOMINER_PY" "$MOLCENSUS/scripts/aws/biominer_gemini.py" --vertex "$VERTEX_ENV" --biominer "$BIOMINER" --identity --check \
+    || echo "WARNING: the Vertex AI check failed (see above). BioMiner stages will lose content until this is fixed."
+else
+  echo "WARNING: no $VERTEX_ENV (see scripts/aws/README.md); the BioMiner stages will be skipped"
+fi
 
 step "MolCensus .env"
 printf 'BIOMINER_DIR=%s\nBIOMINER_PYTHON=%s\n' "$BIOMINER" "$BIOMINER_PY" > "$MOLCENSUS/.env"
