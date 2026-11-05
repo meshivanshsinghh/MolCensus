@@ -46,8 +46,20 @@ PUBLISHED = {("uspto", "molscribe"): 0.926, ("uob", "molscribe"): 0.879, ("clef"
 READER_NAMES = {"molscribe": "MolScribe", "molsight": "MolSight", "molglyph": "MolGlyph"}
 PAPERS = ["1", "2", "4", "6", "16", "19"]
 
-# Project spend, from the AWS and Google Cloud billing consoles. None until filled in.
-AWS_BILL: dict | None = None
+# AWS spend, checked in Cost Explorer on 2026-11-05. The account's usage is recorded at $0.00, so these rows give the
+# same usage at us-east-2 on-demand list prices: Cost Explorer's g5.2xlarge hours for 3 and 4 November (3.14 and 8.33),
+# and the g6.2xlarge run of 5 November from its start (03:00:49 UTC) to its stop after the upload (about 05:48 UTC).
+AWS_BILL: dict | None = {
+    "rows": [
+        ("AWS GPU instances, list price", 16.64,
+         "11.5 hours of g5.2xlarge at $1.212 and about 2.8 hours of g6.2xlarge at $0.9776 an hour"),
+        ("AWS disks, snapshots, IP address and S3, list price", 1.20,
+         "a 150 GB gp3 disk for about 2.4 days, snapshot storage, public IPv4 hours and 1 GB in S3 (approximate)"),
+    ],
+    "note": ("AWS Cost Explorer records this account's usage at $0.00; it is a member account of an AWS organization. "
+             "The AWS rows are what the same usage costs at on-demand list prices. The Gemini calls were billed to a "
+             "Google Cloud free-trial credit. In all, the project used about $25 of cloud services at list price."),
+}
 
 
 # ---------- formatting ----------
