@@ -232,6 +232,15 @@ def course(run: Path, predictions_dir: Path, ground_truth_csv: Path, papers: lis
         print(f"Pipeline predictions equal the merged tables' structures: {same}.\n")
         print("\n".join(score_table(scores)))
 
+        # Why "no * pieces" loses recall: a few ground-truth entries are themselves written with * atoms.
+        starred = truth_frame[truth_frame["gt_smiles"].str.contains("*", regex=False)]
+        print(f"\n### Ground-truth entries with * atoms ({rule}): which tools found them\n")
+        print("| Paper | Entry | * atoms | " + " | ".join(tools) + " |\n" + "|---" * (len(tools) + 3) + "|")
+        for _, row in starred.iterrows():
+            key = keys_of([row["gt_smiles"]], rule)
+            print(f"| {row['paper_id']} | {row['gt_name']} | {row['gt_smiles'].count('*')} | "
+                  + " | ".join("yes" if key & pred.get(row["paper_id"], set()) else "" for pred in tools.values()) + " |")
+
         print(f"\n### Paired with the readers ({rule}): found only by BioMiner vs only by the reader, exact McNemar p\n")
         for name in ["BioMiner (linked)", "BioMiner (all extracted)"]:
             header = f"| {name} vs | " + " | ".join(READERS) + " |"
@@ -289,9 +298,22 @@ SPLITS = {
     "R-group": (lambda labels: labels[labels["rgroup"]], lambda out: out["part"]),
     "chiral": (lambda labels: labels[labels["chiral"]], lambda out: _chiral(out["merged"])),
     "all, all extracted": (lambda labels: labels, lambda out: out["merged"] + out["ocsr"]),
-    "all, all extracted, no * pieces": (lambda labels: labels,
-                                        lambda out: [s for s in out["merged"] + out["ocsr"] if isinstance(s, str) and "*" not in s]),
+    "all, all extracted, no * pieces": (lambda labels: labels, lambda out: _no_star(out["merged"] + out["ocsr"])),
 }
+
+def _no_star(values: list) -> list:
+    return [s for s in values if isinstance(s, str) and "*" not in s]
+
+
+# For the by-type comparison: which BioMiner structures each rule scores against one type's labels.
+# "Linked, any table" isolates BioMiner's pairing; "all extracted, no * pieces" adds what OCSR read but the
+# LLM did not tie to a label. Chiral labels are always scored against structures with '@', as BioMiner does.
+TYPE_RULES = {
+    "linked, BioMiner's pairing": lambda out, split: SPLITS[split][1](out),
+    "linked, any table": lambda out, split: (_chiral if split == "chiral" else list)(out["merged"]),
+    "all extracted, no * pieces": lambda out, split: (_chiral if split == "chiral" else list)(_no_star(out["merged"] + out["ocsr"])),
+}
+TYPES = ["all", "full", "R-group", "chiral"]
 
 STRUCTURE_KEYS = {"all": "structure", "full": "entire_structure", "R-group": "scaffold_structure", "chiral": "chiral_structure"}
 
@@ -324,6 +346,19 @@ def biovista(run: Path, labels_dir: Path) -> None:
         print("\n".join(score_table(scores, compact=True)))
         print("\nPaper mean (as BioMiner averages), recall / precision:",
               "; ".join(f"{s}: {macro(df, 'recall'):.3f} / {macro(df, 'precision'):.3f}" for s, df in scores.items()))
+
+        print(f"\n### BioVista by type ({rule}): linking vs finding. Recall: pooled [95% Wilson] (found of labels); mean over papers\n")
+        print("| Type | " + " | ".join(TYPE_RULES) + " | Published (BioMiner-Instruct, mean) |\n" + "|---" * (len(TYPE_RULES) + 2) + "|")
+        by_type = {}
+        for split in TYPES:
+            truth = {p: keys_of(SPLITS[split][0](biovista_labels(labels_dir, names[p]))["smiles"].tolist(), rule) for p in papers}
+            by_type[split] = {name: score({p: keys_of(pick(outputs[p], split), rule) for p in papers}, truth, papers)
+                              for name, pick in TYPE_RULES.items()}
+            print(f"| {split} | " + " | ".join(f"{cell(df.iloc[-1], 'recall', count=True)}; mean {macro(df, 'recall'):.3f}"
+                                               for df in by_type[split].values()) + f" | {PUBLISHED_BIOVISTA[split][0]:.3f} |")
+        for split in ("all", "chiral"):  # full and R-group: OCSR structures have no type, so no per-type precision
+            print(f"| {split}, precision | " + " | ".join(f"{cell(df.iloc[-1], 'precision', count=True)}; mean {macro(df, 'precision'):.3f}"
+                                                          for df in by_type[split].values()) + f" | {PUBLISHED_BIOVISTA[split][1]:.3f} |")
 
     print("\n## BioVista: BioMiner's own --biovista_evaluate output (its SMILES rule), recall / precision\n")
     evaluated = {p: biominer_evaluator((folder / str(p) / "biominer_stdout.log").read_text(errors="replace")) for p in papers}

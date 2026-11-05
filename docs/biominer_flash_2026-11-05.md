@@ -182,7 +182,8 @@ So a second rule is added in the analysis script. The pipeline's rule is unchang
   output, linked or not.
 - **"All extracted, no `*` pieces"** is the same without structures that contain `*` atoms. Five
   of the 222 ground-truth rows contain `*` atoms (one in paper 2, four in paper 19). BioMiner's
-  OCSR matched two of the paper 19 ones, so this variant loses those two finds.
+  OCSR matched two of the paper 19 ones, so this variant loses those two finds (see "Why leaving
+  out the `*` pieces lowers recall" in section 5).
 
 ## 5. Course papers: scores
 
@@ -232,6 +233,41 @@ papers 2 and 4:
 | Paper 4 recall | 0.200 | 0.400 (24 of 60) | 0.400 |
 
 The readers' InChIKey scores are those of section 2 of `docs/aws_run_2026-11-04.md`.
+
+### Why leaving out the `*` pieces lowers recall from 0.350 to 0.341
+
+The drop is two molecules, 77 to 75 of 220, both in paper 19 (entries 19-c and 19-d below). Five
+ground-truth entries contain `*` atoms. This is which tools found each one; the entries are numbered
+here instead of named, because the compound names belong to the private answer key:
+
+| Paper | Entry | `*` atoms | BioMiner, linked | BioMiner, all extracted | All extracted, no `*` pieces | MolScribe | MolSight | MolGlyph |
+|---|---|---|---|---|---|---|---|---|
+| 2 | 2-a | 5 | | | | | | |
+| 19 | 19-a | 1 | | | | | yes | |
+| 19 | 19-b | 1 | | | | | yes | |
+| 19 | **19-c** | 1 | | **yes** | | | yes | |
+| 19 | **19-d** | 1 | | **yes** | | yes | yes | yes |
+
+**Why they matched:**
+- **One generic group.** The two molecules are drawn side by side in one scheme of paper 19. Each
+  has the text label "Heteroaryl/Aryl" in place of one group. The ground truth writes that group
+  as a single `*` atom bonded to a carbon.
+- **MolGlyph read both drawings correctly,** inside BioMiner, and it also wrote the label as one
+  `*` in the same place. On one it read the label text as "Hinyl"; on the other it read no
+  label. Either way, the canonical SMILES equal the ground truth's.
+- **The LLM tied neither drawing to a compound label.** So both are in "all extracted" but not in
+  the linked table.
+
+**Why the variant loses them:**
+- **The variant drops every structure with a `*` atom.** These two are whole drawn molecules with
+  one generic group, not R-group scaffold pieces, but the SMILES alone cannot tell the two kinds
+  apart.
+- **Under InChIKey the same two are lost** (80 to 78). InChI cannot handle `*` atoms, so both
+  rules compare these entries by SMILES.
+- **Both are also found by crop readers,** so the count of molecules only BioMiner found does not
+  change.
+- **BioMiner found none of the other three `*` entries.** The paper 2 entry is a small piece with
+  five `*` atoms.
 
 ### Next to Obaidullah's BioMiner run
 
@@ -373,8 +409,67 @@ the models.
   against 0.654) and for chiral ones (0.219 against 0.454). For R-group tables it is small (0.288
   against 0.339).
 - **The papers vary widely.** Papers 106, 153, 40 and 68 reach recall 0.58 to 0.82. Papers 156,
-  163, 312 and 65 stay below 0.1, and paper 156 got 0 of 17. With 12 papers, the paper-bootstrap interval
-  for pooled recall runs from 0.18 to 0.48.
+  163, 312 and 65 stay below 0.1, and paper 156 got 0 of 17. With 12 papers, the paper-bootstrap
+  interval for pooled recall runs from 0.18 to 0.48.
+
+### Linking versus finding, by type
+
+How much of the recall gap comes from BioMiner not *finding* a structure, and how much from Gemini
+not *linking* a structure it found to a compound label? To see, the same label types are scored
+two ways:
+
+- **Linked:** BioMiner's structure tables, paired by type as above.
+- **All extracted, no `*` pieces:** the linked structures plus every structure BioMiner's OCSR
+  read, without `*` atoms, linked or not. Chiral labels are scored only against structures with
+  `@`, as BioMiner does.
+
+Scoring each type against all linked tables, instead of only its own table, gives exactly the same
+numbers on these 12 papers. So BioMiner's pairing by type is not a factor.
+
+**Recall:** pooled [95% Wilson] (found of labels), then the mean over papers. The published values
+are means over papers.
+
+| Type (labels) | Linked | All extracted, no `*` pieces | Published (BioMiner-Instruct, 450 papers) |
+|---|---|---|---|
+| All (415) | 0.313 [0.271, 0.359] (130); mean 0.338 | 0.407 [0.361, 0.455] (169); mean 0.455 | 0.580 |
+| Full structures (163) | 0.350 [0.281, 0.426] (57); mean 0.361 | 0.583 [0.506, 0.656] (95); mean 0.594 | 0.654 |
+| R-group tables (256) | 0.289 [0.237, 0.347] (74); mean 0.283 | 0.293 [0.241, 0.351] (75); mean 0.286 | 0.339 |
+| Chiral (211) | 0.209 [0.159, 0.268] (44); mean 0.221 | 0.294 [0.237, 0.359] (62); mean 0.369 | 0.454 |
+
+**The gap in mean recall,** and how much of it counting the unlinked structures closes:
+
+| Type | Gap to published (linked) | Closed by counting unlinked structures | Left |
+|---|---|---|---|
+| All | 0.242 | 0.117 (48%) | 0.125 |
+| Full structures | 0.293 | 0.233 (80%) | 0.060 |
+| R-group tables | 0.056 | 0.003 (5%) | 0.053 |
+| Chiral | 0.233 | 0.148 (64%) | 0.085 |
+
+**Precision** stays about the same when the unlinked structures are added:
+- **All:** 0.522 [0.460, 0.583] (130 of 249) linked, against 0.537 [0.481, 0.591] (169 of 315).
+- **Chiral:** 0.297 [0.230, 0.375] (44 of 148), against 0.335 [0.271, 0.406] (62 of 185).
+- **Published:** 0.615 (all) and 0.467 (chiral).
+
+Precision by type is given only for these two. OCSR reads carry no full-or-R-group type, so the
+other two types have no precision.
+
+**What this shows:**
+
+- **On full structures, "all extracted" is a ceiling for any linking step.** Every structure in
+  BioMiner's full-structure table is one of its OCSR reads, with no exception in all 18 papers.
+  So no linking step could keep more full structures than "all extracted" holds.
+- **Full structures:** about 80% of the gap is linking. MolGlyph read the molecule, but Gemini did
+  not tie it to a compound label. What is left, 0.06, is small enough that the different paper
+  samples could explain it.
+- **Chiral structures:** about two thirds of the gap is linking.
+- **R-group tables:** almost none of the gap is linking in this sense. These molecules exist only
+  after BioMiner enumerates a table, which is itself an LLM step: 150 of the 153 structures in
+  BioVista's R-group tables are enumerations, not OCSR reads. The remaining 0.05 is in the
+  enumeration.
+- **Overall,** about half the gap closes. The rest comes mostly from the R-group tables, which hold
+  256 of the 415 labels on these papers.
+- **Caveats.** These are 12 papers against 450, and the rule is canonical SMILES. BioMiner's own
+  rule gave linked means within 0.005 of these (see the evaluator table above).
 
 ## 7. What this means
 
@@ -390,8 +485,14 @@ the models.
   found, 9 in paper 4 and 3 in paper 19, all by filling in R-group tables. Recall on those two
   papers is still low, at 38% and 25% at best.
 - **On BioVista, Gemini 3.5 Flash in BioMiner's linking role recalls fewer structures than the
-  published BioMiner-Instruct.** Mean structure recall is 0.34 against 0.58. Precision is close:
-  0.53 against 0.62. Twelve papers are too few to separate the model from the paper sample.
+  published BioMiner-Instruct.** Mean structure recall is 0.34 against 0.58, while precision is
+  close: 0.53 against 0.62.
+- **Most of that gap is linking, not finding.** On full structures, MolGlyph had read most of the
+  missing molecules, but Gemini did not tie them to a compound label. Counting them closes 80% of
+  the gap: mean recall 0.59 against the published 0.65. On chiral structures it closes about two
+  thirds. On R-group tables it closes almost nothing: there the shortfall is in BioMiner's
+  enumeration of the tables, which is also an LLM step.
+- **Twelve papers is a small sample.** Part of what is left could be the different papers.
 
 ## 8. Notes for methods.md
 
@@ -424,5 +525,20 @@ These are facts to add to `docs/methods.md`; that file was not edited here.
 - **BioVista,** 12 papers, 415 labelled structures. Pooled structure recall 0.313, precision 0.522.
   BioMiner's own evaluator, as means over papers: 0.338 / 0.526, against the published 0.580 /
   0.615 for BioMiner-Instruct on 450 papers.
+- **Linking vs finding on BioVista** (means over papers, canonical SMILES):
+
+  | Type | Linked | All extracted, no `*` pieces | Published | Share of the gap closed |
+  |---|---|---|---|---|
+  | Full structures | 0.361 | 0.594 | 0.654 | 80% |
+  | Chiral | 0.221 | 0.369 | 0.454 | about two thirds |
+  | R-group tables | 0.283 | 0.286 | 0.339 | almost none |
+
+  Every full-table structure is an OCSR read, so for full structures "all extracted" is a ceiling
+  for any linking step. R-group-table structures are enumerations (150 of 153), so no OCSR read
+  can make up for them.
+- **The "no `*` pieces" variant also drops whole molecules drawn with a generic group.** On the
+  course papers these are two paper-19 molecules (19-c and 19-d above), each drawn with a
+  "Heteroaryl/Aryl" label that the ground truth writes as `*`. That is why its recall is 0.341,
+  not 0.350.
 - **Obaidullah's BioMiner numbers** (72.4 / 34.5 / 46.8) are consistent with counting every
   structure BioMiner read, not only the linked ones. His model is not yet confirmed.
