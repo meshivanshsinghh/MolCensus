@@ -42,8 +42,8 @@ uses a header-only placeholder (`placeholder_ground_truth.csv`).
    Set a budget alert on that project's billing account. The instance signs in with AWS workload
    identity federation: Google trusts the instance role `molcensus-ec2` and lets only that role act
    as a service account that may call Vertex AI (`roles/aiplatform.user`). So no key is stored on the
-   instance; service-account keys and service-account API keys are also blocked by the organization's
-   policy. Done once (2026-11-04), with gcloud signed in as the project owner:
+   instance, and this also works where an organization's policy blocks service-account keys. Done once,
+   with gcloud signed in as the project owner (pick any names for the pool and its provider):
 
    ```bash
    PROJECT=<project id>; SA=<service account>@$PROJECT.iam.gserviceaccount.com

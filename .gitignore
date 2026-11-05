@@ -27,6 +27,10 @@ results/**/scored/
 # Run log: grows with every run and holds local paths
 results/**/run_log.txt
 
+# GPU-run results copied back from S3: course metrics and public-set predictions. They stay local;
+# the report's numbers are in scripts/report/report_data.json.
+results/aws*/
+
 # Private notes, report drafts and downloaded bundles
 TASKS.md
 # The owner's Vertex AI checker, and a handoff note that names the Google project and service account

@@ -171,6 +171,83 @@ limits, although both keys had passed a one-call test during setup. Because the 
 pass, `run_all.sh` skipped BioMiner on the course papers and on BioVista. MolRecBench-Wild was
 skipped too, because its data file was not on the instance.
 
+## The BioMiner run (2026-11-05)
+
+BioMiner ran end to end once, on a `g6.2xlarge` in us-east-2 with one NVIDIA L4. It was BioMiner commit
+`17c6161`, patched by `scripts/aws/patch_biominer.py`. The language model was Gemini 3.5 Flash on Google Cloud
+Vertex AI, through its OpenAI-compatible endpoint, not BioMiner's own BioMiner-Instruct. The instance signed in
+to Google through AWS-to-Google workload identity federation, with no key stored on it. The API reported
+`google/gemini-3.5-flash` for every call. Settings: temperature 0, JSON output for image calls. A call is retried
+up to 5 times after a server error, a connection error, or a rate limit (429) that asks for a wait of 300 s or
+less; a 429 asking for longer gives up at once.
+
+| | |
+|---|---|
+| Times | smoke test 3 min; six course papers 22 min (1.6 to 5.6 per paper); 12 BioVista papers 43 min (1.7 to 6.1 per paper) |
+| Calls | 330 answered, 4 retried after short 429s, 0 lost |
+| Tokens | 1,059,125 input, 86,175 output and 457,281 thinking (total minus input minus output) |
+| Cost | $6.48 at list price: $1.50 per million input tokens, $9.00 per million output and thinking tokens |
+
+**What counts as a BioMiner prediction.** The pipeline's rule, "linked structures", is BioMiner's
+`_structure_merged_output_` table: the full structures and R-group enumerations that the language model tied to a
+compound label. It does not depend on activity values. The analysis in `scripts/analysis/biominer_scores.py`
+adds two rules. "All extracted structures" also counts every structure in BioMiner's OCSR output
+(`<task>_ocsr_output.json`), whether or not it was linked. "All extracted, without `*` pieces" leaves out
+structures with `*` atoms, which are table scaffolds and substituent pieces. That variant also drops two
+paper-19 molecules that are drawn with a "Heteroaryl/Aryl" label, which the answer key itself writes as `*`;
+that is why its recall is 0.341 and not 0.350.
+
+Course papers, canonical SMILES rule (220 molecules):
+
+| Rule | Recall | Precision | F1 |
+|---|---|---|---|
+| Linked | 0.214 [0.165, 0.272] (47) | 0.810 (47 of 58) | 0.338 |
+| All extracted | 0.350 (77) | 0.445 (of 173) | 0.392 |
+| All extracted, without `*` pieces | 0.341 (75) | 0.789 (of 95) | 0.476 |
+
+BioMiner found 12 molecules that none of the three crop readers found (9 in paper 4, 3 in paper 19), all by
+enumerating R-group tables. Obaidullah's BioMiner run on the same papers (72.4% precision, 34.5% recall, 46.8%
+F1; group report, Table 5) is consistent with counting every structure BioMiner read. His model is not confirmed.
+
+**BioVista, linking vs finding.** On 12 BioVista papers (415 labelled structures), as means over papers under
+canonical SMILES:
+
+| Type | Linked | All extracted, without `*` pieces | Published (BioMiner-Instruct, 450 papers) | Share of the gap closed |
+|---|---|---|---|---|
+| Full structures | 0.361 | 0.594 | 0.654 | 80% |
+| Chiral | 0.221 | 0.369 | 0.454 | about two thirds |
+| R-group tables | 0.283 | 0.286 | 0.339 | almost none |
+
+Every full-table structure is an OCSR read, so for full structures "all extracted" is a ceiling for any linking
+step. R-group-table structures are enumerations (150 of 153), so no OCSR read can make up for them. Pooled
+structure recall is 0.313 and precision 0.522. BioMiner's own evaluator, as means over papers, gives 0.338 and
+0.526, against the published 0.580 and 0.615. Details: `docs/biominer_flash_2026-11-05.md`.
+
+## Recall ceiling
+
+The 146 course molecules that no crop reader found were sorted into five buckets: reading loss (drawn in full
+and cropped, but misread), detection loss (drawn in full, not cropped), table loss (defined only through an
+R-group table, placeholder or linker box), not in the figures, or unresolved. No label was set by hand.
+
+Automatic evidence came first:
+- a second MolDetV2 pass at confidence 0.05, with MolScribe on the 38 new crops (an exact InChIKey match means
+  detection loss);
+- an exact substructure test of every reading with `*` atoms against each missed molecule, allowing branches only
+  at the `*` positions (table loss);
+- a pipeline crop whose reading has Tanimoto of at least 0.8 to a missed molecule, when that molecule is the
+  reading's closest ground-truth molecule (reading loss).
+
+The rest went to two AI judges, Claude and Gemini 3.5 Flash. They saw the same page images, with the crops
+marked, and the same instructions. First they were tested blind on 213 molecules with a known answer: Claude
+scored 0.967 and Gemini 0.930. Their agreement was Cohen's kappa = 0.904 over all 219 molecules. A judge label
+counted only when both agreed. A layer 2 label that both judges contradicted was withdrawn; without that rule
+(the strict rule) the totals are 142 table loss, 3 reading loss and 1 unresolved.
+
+Result: 138 table loss, 2 reading loss, 0 detection loss, 0 not in the figures, 6 unresolved. So 75 to 81 of the
+219 molecules (0.342 to 0.370) are drawn in full, against 73 (0.333) found by any of the three readers. On these
+papers recall is limited by how compounds are defined, not by detection or reading. Details:
+`docs/recall_ceiling.md`.
+
 ## Privacy
 
 The six course PDFs are copyrighted and their ground truth is private sponsor data. Neither is
@@ -187,8 +264,9 @@ because their images and SMILES are public. The optional W&B upload follows the 
 - There is no detection ground truth, so missed detections and misreadings can't be separated.
 - MolScribe can't reject a crop that has no complete molecule, so detection errors flow straight
   through.
-- BioMiner's predictions are the structures its MLLM linked to a compound label (the
-  `_structure_merged_output_` table). A structure it read but could not link to a label is not in
-  that table. Its final `_merge_` table keeps only structures with a bioactivity value; it is scored
-  separately as `biominer_bioactivity`.
-- Everything ran once: on the Mac CPU, and the crop readers again on one AWS GPU run (above).
+- BioMiner's predictions in the pipeline are the structures its language model linked to a compound label
+  (the `_structure_merged_output_` table). A structure it read but did not link is not in that table; the
+  "all extracted" rules above count those too. Its final `_merge_` table keeps only structures with a
+  bioactivity value; it is scored separately as `biominer_bioactivity`.
+- BioMiner ran with Gemini 3.5 Flash, not BioMiner-Instruct, and on 12 BioVista papers rather than 450.
+- Everything ran once: on the Mac CPU, the crop readers again on one AWS GPU run, and BioMiner on another.

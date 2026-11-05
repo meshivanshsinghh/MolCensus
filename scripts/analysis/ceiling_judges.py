@@ -6,10 +6,11 @@ one picture of its molecules, and the written instructions (outputs/ceiling/pack
 same packets. The answer key (outputs/ceiling/judges/key.csv) marks the molecules with a known answer:
 found by a reader (A), or a layer 2 bucket (1 -> A, 2 -> B, 3 -> C). Neither judge sees it.
 
-The Gemini judge is gemini-3.5-flash on Vertex AI, one call at a time, signed in like testing_key.py
-(your gcloud login impersonates the service account; set VERTEX_PROJECT and VERTEX_SERVICE_ACCOUNT in .env
-or the shell). Its answers are cached in outputs/ceiling/judges/gemini/. The Claude judge is Claude Code,
-which read the same packet files and wrote its answers to outputs/ceiling/judges/claude/.
+The Gemini judge is gemini-3.5-flash on Vertex AI, one call at a time. It signs in through
+scripts/aws/molcensus_vertex.py: your gcloud application-default login impersonates a service account that
+has Vertex AI access. Set VERTEX_PROJECT and VERTEX_SERVICE_ACCOUNT in .env or the shell. Its answers are
+cached in outputs/ceiling/judges/gemini/. The Claude judge is Claude Code, which read the same packet files
+and wrote its answers to outputs/ceiling/judges/claude/.
 """
 
 from __future__ import annotations
@@ -203,7 +204,8 @@ def ask_gemini(packet: str, ids: list[str]) -> dict:
     os.environ.setdefault("VERTEX_AUTH", "impersonate")  # on the Mac: gcloud login impersonates the service account
     missing = [v for v in ("VERTEX_PROJECT", "VERTEX_SERVICE_ACCOUNT") if not os.environ.get(v)]
     if missing:
-        raise RuntimeError(f"Set {', '.join(missing)} in .env or the shell (see testing_key.py)")
+        raise RuntimeError(f"Set {', '.join(missing)} in .env or the shell (a Google Cloud project with Vertex AI, "
+                           "and a service account your gcloud login can impersonate)")
     client = openai.OpenAI(base_url=molcensus_vertex.base_url(os.environ["VERTEX_PROJECT"]), api_key="vertex",
                            http_client=molcensus_vertex.http_client(), max_retries=0, timeout=900)
     prompt, images = packet_files(packet)

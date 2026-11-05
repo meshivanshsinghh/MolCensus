@@ -236,9 +236,10 @@ def course(run: Path, predictions_dir: Path, ground_truth_csv: Path, papers: lis
         starred = truth_frame[truth_frame["gt_smiles"].str.contains("*", regex=False)]
         print(f"\n### Ground-truth entries with * atoms ({rule}): which tools found them\n")
         print("| Paper | Entry | * atoms | " + " | ".join(tools) + " |\n" + "|---" * (len(tools) + 3) + "|")
-        for _, row in starred.iterrows():
+        for i, (_, row) in enumerate(starred.iterrows()):
             key = keys_of([row["gt_smiles"]], rule)
-            print(f"| {row['paper_id']} | {row['gt_name']} | {row['gt_smiles'].count('*')} | "
+            entry = f"{row['paper_id']}-{'abcdefghij'[(starred['paper_id'].iloc[:i] == row['paper_id']).sum()]}"  # no names: private
+            print(f"| {row['paper_id']} | {entry} | {row['gt_smiles'].count('*')} | "
                   + " | ".join("yes" if key & pred.get(row["paper_id"], set()) else "" for pred in tools.values()) + " |")
 
         print(f"\n### Paired with the readers ({rule}): found only by BioMiner vs only by the reader, exact McNemar p\n")

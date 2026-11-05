@@ -29,13 +29,13 @@ s = "moldetv2_bbox_molglyph_ocsr__updated_v3_with_index_split4seg0.125_bg_lo"
 (out / f"{name}_structure_merged_output_{s}_{s}_clean_new.csv").write_text(",ligand,smiles\n0,x,CCCl\n")
 (out / f"{name}_page_2_{s}.csv").write_text("ligand,smiles\ny,CCBr\n")
 (out / f"{name}_merged_updated_v3_txtmu_updated_v3_imgmuc_output.csv").write_text("protein,ligand,type,value,unit\n")
-merged = "" if name == "3" else "ligand,smiles\n9a,CCO\n9a,CCO\n9b,c1ccccc1\n10,\n"
+merged = "" if name == "3" else "ligand,smiles\n4x,CCO\n4x,CCO\n4y,c1ccccc1\n10,\n"
 (out / f"{name}_structure_merged_output_{s}_{s}.csv").write_text(merged)
 if name == "2":
     print("ValueError: cannot map identifiers", file=sys.stderr)
     sys.exit(1)
 (out / f"{name}_merge_{s}_{s}.csv").write_text(
-    ",protein,ligand,type,value,unit,smiles\n0,EGFR,9a,IC50,5,nM,CCO\n1,EGFR,9a,Ki,2,nM,CCO\n")
+    ",protein,ligand,type,value,unit,smiles\n0,EGFR,4x,IC50,5,nM,CCO\n1,EGFR,4x,Ki,2,nM,CCO\n")
 (out / f"{name}_merge_failed_ligand_{s}_{s}.json").write_text("[]")
 '''
 
@@ -60,12 +60,12 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
         return sorted(zip(rows["pred_label"], rows["pred_smiles"]))
 
     # Only the structure_merged table counts, deduplicated; empty SMILES and look-alike files are ignored.
-    assert pairs(structure, 1) == [("9a", "CCO"), ("9b", "c1ccccc1")]
+    assert pairs(structure, 1) == [("4x", "CCO"), ("4y", "c1ccccc1")]
     assert (structure.loc[structure["paper_id"] == 1, "error"] == "").all()
-    assert pairs(bioactivity, 1) == [("9a", "CCO")]  # two measurements, one prediction
+    assert pairs(bioactivity, 1) == [("4x", "CCO")]  # two measurements, one prediction
 
     # Failed final merge: structure rows are kept and say so; the bioactivity table is an error row.
-    assert pairs(structure, 2) == [("9a", "CCO"), ("9b", "c1ccccc1")]
+    assert pairs(structure, 2) == [("4x", "CCO"), ("4y", "c1ccccc1")]
     assert structure.loc[structure["paper_id"] == 2, "error"].str.startswith("partial run: exit code 1").all()
     paper2 = bioactivity[bioactivity["paper_id"] == 2]
     assert len(paper2) == 1 and paper2["pred_smiles"].iloc[0] == "" and "exit code 1" in paper2["error"].iloc[0]
@@ -73,7 +73,7 @@ def test_biominer_reads_structure_and_bioactivity_tables(tmp_path):
     # An unreadable table is skipped without stopping the run.
     paper3 = structure[structure["paper_id"] == 3]
     assert len(paper3) == 1 and paper3["error"].iloc[0] == "no readable output table"
-    assert pairs(bioactivity, 3) == [("9a", "CCO")]
+    assert pairs(bioactivity, 3) == [("4x", "CCO")]
 
     # Every paper records the model names, the endpoint (not its URL, which names the project), the
     # models the API says answered, and how many MLLM calls failed.

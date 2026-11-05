@@ -6,7 +6,7 @@ PREDICTION_COLUMNS = [
     "paper_id",
     "page",          # empty when the tool does not report a page
     "pred_smiles",   # predicted SMILES, empty if the tool returned nothing
-    "pred_label",    # compound label in the paper (e.g. "9c") when the tool links one
+    "pred_label",    # compound label in the paper (e.g. "4z") when the tool links one
     "confidence",    # tool-reported confidence, empty if the tool has none
     "runtime_s",
     "error",         # error message if this item failed
