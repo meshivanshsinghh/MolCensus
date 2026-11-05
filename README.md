@@ -12,7 +12,7 @@ with a list of every molecule the paper reports. The main test set is six medici
 Northeastern University course, and each tool is also checked on public image sets and on 12 papers from
 the BioVista benchmark.
 
-**Report:** [meshivanshsinghh.github.io/molcensus](https://meshivanshsinghh.github.io/molcensus/)
+**Report:** [meshivanshsinghh.github.io/MolCensus](https://meshivanshsinghh.github.io/MolCensus/)
 
 ![From a drawing to a comparable key](docs/images/how_a_molecule_is_scored.png)
 
